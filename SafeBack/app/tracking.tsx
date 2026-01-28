@@ -1,0 +1,281 @@
+import { useEffect, useMemo, useState } from "react";
+import { StatusBar } from "expo-status-bar";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { Linking, Platform, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import * as Location from "expo-location";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
+import { fetchRoute, type RouteMode, type RouteResult } from "../src/lib/routing";
+import { getSessionById } from "../src/lib/db";
+import { supabase } from "../src/lib/supabase";
+import { startBackgroundTracking, stopBackgroundTracking } from "../src/services/backgroundLocation";
+import { getPremium } from "../src/lib/premium";
+
+function formatTime(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+type SessionData = {
+  id: string;
+  from_address: string;
+  to_address: string;
+  expected_arrival_time?: string | null;
+};
+
+const darkMapStyle = [
+  { elementType: "geometry", stylers: [{ color: "#0f172a" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0f172a" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#1e293b" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#0f172a" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#e2e8f0" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#64748b" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] }
+];
+
+export default function TrackingScreen() {
+  const router = useRouter();
+  const { sessionId, mode } = useLocalSearchParams<{ sessionId?: string; mode?: RouteMode }>();
+  const [checking, setChecking] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [session, setSession] = useState<SessionData | null>(null);
+  const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [backgroundOn, setBackgroundOn] = useState(false);
+  const [bgError, setBgError] = useState<string | null>(null);
+  const [premium, setPremiumState] = useState(false);
+  const [premiumChecked, setPremiumChecked] = useState(false);
+  const hasGoogleKey = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
+
+  const routeMode = useMemo<RouteMode>(() => mode ?? "walking", [mode]);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+      setChecking(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const value = await getPremium();
+      setPremiumState(value);
+      setPremiumChecked(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    (async () => {
+      const data = await getSessionById(sessionId);
+      if (data) {
+        setSession({
+          id: data.id,
+          from_address: data.from_address,
+          to_address: data.to_address,
+          expected_arrival_time: data.expected_arrival_time ?? null
+        });
+      }
+    })();
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!session) {
+      setRouteResult(null);
+      return;
+    }
+    if (routeMode === "transit" && !hasGoogleKey) {
+      setRouteResult(null);
+      return;
+    }
+    (async () => {
+      try {
+        setRouteLoading(true);
+        const data = await fetchRoute(session.from_address, session.to_address, routeMode);
+        setRouteResult(data);
+      } catch {
+        setRouteResult(null);
+      } finally {
+        setRouteLoading(false);
+      }
+    })();
+  }, [session, routeMode, hasGoogleKey]);
+
+  useEffect(() => {
+    let subscription: Location.LocationSubscription | null = null;
+    (async () => {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") return;
+      subscription = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 10 },
+        (position) => {
+          setCoords({ lat: position.coords.latitude, lon: position.coords.longitude });
+        }
+      );
+    })();
+    return () => {
+      subscription?.remove();
+    };
+  }, []);
+
+  if (!checking && !userId) {
+    return <Redirect href="/auth" />;
+  }
+
+  const region = routeResult?.coords?.[0]
+    ? {
+        latitude: routeResult.coords[0].latitude,
+        longitude: routeResult.coords[0].longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02
+      }
+    : coords
+    ? {
+        latitude: coords.lat,
+        longitude: coords.lon,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02
+      }
+    : undefined;
+
+  return (
+    <SafeAreaView className="flex-1 bg-slate-50">
+      <StatusBar style="dark" />
+      <View className="flex-1 px-6 pt-16">
+        <View className="flex-row items-center">
+          <TouchableOpacity
+            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            onPress={() => router.back()}
+          >
+            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+          </TouchableOpacity>
+          <Text className="text-2xl font-bold text-black">Suivi du trajet</Text>
+        </View>
+
+        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase text-slate-500">Temps estime</Text>
+          <Text className="mt-2 text-base font-semibold text-slate-800">
+            {routeLoading
+              ? "Calcul en cours..."
+              : routeResult
+              ? `${routeResult.durationMinutes} min · ${routeResult.distanceKm} km`
+              : routeMode === "transit" && !hasGoogleKey
+              ? "Transit: cle API requise"
+              : "Non disponible"}
+          </Text>
+          <Text className="mt-3 text-xs uppercase text-slate-500">Heure d arrivee</Text>
+          <Text className="mt-2 text-base font-semibold text-slate-800">
+            {formatTime(session?.expected_arrival_time) || "Non renseignee"}
+          </Text>
+        </View>
+
+        <View className="mt-6 h-72 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          {!premiumChecked ? (
+            <View className="flex-1 items-center justify-center">
+              <Text className="text-sm text-slate-500">Chargement...</Text>
+            </View>
+          ) : !premium ? (
+            <TouchableOpacity
+              className="flex-1 items-center justify-center"
+              onPress={() => router.push("/premium")}
+            >
+              <Text className="text-sm font-semibold text-slate-700">🔒 Carte Premium</Text>
+              <Text className="mt-2 text-xs text-slate-500">
+                Debloque la carte temps reel et le trajet.
+              </Text>
+            </TouchableOpacity>
+          ) : region ? (
+            <MapView
+              style={{ flex: 1 }}
+              initialRegion={region}
+              showsUserLocation
+              provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+              customMapStyle={Platform.OS === "android" ? darkMapStyle : undefined}
+              onPress={() => {
+                if (!session) return;
+                const encodedFrom = encodeURIComponent(session.from_address);
+                const encodedTo = encodeURIComponent(session.to_address);
+                const url =
+                  Platform.OS === "ios"
+                    ? `http://maps.apple.com/?saddr=${encodedFrom}&daddr=${encodedTo}`
+                    : `https://www.google.com/maps/dir/?api=1&origin=${encodedFrom}&destination=${encodedTo}`;
+                Linking.openURL(url);
+              }}
+            >
+              {routeResult?.coords?.length ? (
+                <Polyline coordinates={routeResult.coords} strokeWidth={4} strokeColor="#111" />
+              ) : null}
+              {routeResult?.coords?.[0] ? (
+                <Marker coordinate={routeResult.coords[0]} title="Depart" />
+              ) : null}
+              {routeResult?.coords?.length ? (
+                <Marker coordinate={routeResult.coords[routeResult.coords.length - 1]} title="Arrivee" />
+              ) : null}
+            </MapView>
+          ) : (
+            <View className="flex-1 items-center justify-center">
+              <Text className="text-sm text-slate-500">Chargement de la carte...</Text>
+            </View>
+          )}
+        </View>
+
+        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase text-slate-500">Position actuelle</Text>
+          <Text className="mt-2 text-base font-semibold text-slate-800">
+            {coords ? `${coords.lat.toFixed(5)}, ${coords.lon.toFixed(5)}` : "Recherche..."}
+          </Text>
+        </View>
+
+        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase text-slate-500">Suivi en arriere-plan</Text>
+          {bgError ? (
+            <Text className="mt-2 text-sm text-amber-600">{bgError}</Text>
+          ) : (
+            <Text className="mt-2 text-sm text-slate-600">
+              Envoi automatique des positions pendant le trajet.
+            </Text>
+          )}
+          <View className="mt-4 flex-row gap-3">
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-4 py-3 ${backgroundOn ? "bg-slate-200" : "bg-black"}`}
+              onPress={async () => {
+                if (!session?.id) return;
+                if (!premium) {
+                  router.push("/premium");
+                  return;
+                }
+                try {
+                  setBgError(null);
+                  await startBackgroundTracking(session.id);
+                  setBackgroundOn(true);
+                } catch (error: any) {
+                  setBgError(error?.message ?? "Impossible de demarrer le suivi.");
+                }
+              }}
+              disabled={backgroundOn}
+            >
+              <Text className={`text-center text-sm font-semibold ${backgroundOn ? "text-slate-600" : "text-white"}`}>
+                Demarrer
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="flex-1 rounded-2xl border border-slate-200 px-4 py-3"
+              onPress={async () => {
+                await stopBackgroundTracking();
+                setBackgroundOn(false);
+              }}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">Arreter</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
