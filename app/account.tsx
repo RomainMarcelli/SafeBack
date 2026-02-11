@@ -25,6 +25,7 @@ export default function AccountScreen() {
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -76,6 +77,21 @@ export default function AccountScreen() {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      setSigningOut(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      router.replace("/auth");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Erreur de deconnexion.");
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -145,10 +161,28 @@ export default function AccountScreen() {
             saving ? "bg-slate-300" : "bg-black"
           }`}
           onPress={saveProfile}
-          disabled={saving}
+          disabled={saving || signingOut}
         >
           <Text className="text-center text-base font-semibold text-white">
             Enregistrer les modifications
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          className={`mt-3 rounded-2xl border px-5 py-4 ${
+            signingOut
+              ? "border-slate-200 bg-slate-100"
+              : "border-red-200 bg-red-50"
+          }`}
+          onPress={signOut}
+          disabled={saving || signingOut}
+        >
+          <Text
+            className={`text-center text-base font-semibold ${
+              signingOut ? "text-slate-500" : "text-red-700"
+            }`}
+          >
+            {signingOut ? "Deconnexion..." : "Deconnexion"}
           </Text>
         </TouchableOpacity>
 
