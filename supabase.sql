@@ -23,10 +23,15 @@ create table if not exists sessions (
   from_address text not null,
   to_address text not null,
   expected_arrival_time timestamptz,
+  share_live boolean not null default false,
+  share_token text,
   created_at timestamptz default now()
 );
 
 alter table sessions add column if not exists expected_arrival_time timestamptz;
+alter table sessions add column if not exists share_live boolean not null default false;
+alter table sessions add column if not exists share_token text;
+create unique index if not exists sessions_share_token_idx on sessions(share_token) where share_token is not null;
 
 create table if not exists profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -112,3 +117,50 @@ create policy locations_owner on locations
         and s.user_id = auth.uid()
     )
   );
+
+create or replace function get_shared_session_snapshot(p_session_id uuid, p_share_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  s sessions%rowtype;
+  locs jsonb;
+begin
+  select * into s
+  from sessions
+  where id = p_session_id
+    and share_live = true
+    and share_token = p_share_token;
+
+  if not found then
+    return null;
+  end if;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'latitude', l.latitude,
+        'longitude', l.longitude,
+        'recordedAt', l.recorded_at
+      )
+      order by l.recorded_at asc
+    ),
+    '[]'::jsonb
+  )
+  into locs
+  from locations l
+  where l.session_id = s.id;
+
+  return jsonb_build_object(
+    'session_id', s.id,
+    'from_address', s.from_address,
+    'to_address', s.to_address,
+    'expected_arrival_time', s.expected_arrival_time,
+    'points', locs
+  );
+end;
+$$;
+
+grant execute on function get_shared_session_snapshot(uuid, text) to anon, authenticated;

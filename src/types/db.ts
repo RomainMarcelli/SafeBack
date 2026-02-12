@@ -18,6 +18,8 @@ export type Session = {
   from_address: string;
   to_address: string;
   expected_arrival_time?: string;
+  share_live?: boolean;
+  share_token?: string | null;
   created_at?: string;
 };
 

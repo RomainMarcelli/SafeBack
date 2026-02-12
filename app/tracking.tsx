@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { Linking, Platform, Text, TouchableOpacity, View } from "react-native";
+import { Linking, Platform, Share, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { fetchRoute, type RouteMode, type RouteResult } from "../src/lib/routing";
-import { getSessionById } from "../src/lib/db";
+import { getSessionById, setSessionLiveShare } from "../src/lib/db";
+import { buildFriendViewLink, createLiveShareToken } from "../src/lib/liveShare";
 import { supabase } from "../src/lib/supabase";
 import { startBackgroundTracking, stopBackgroundTracking } from "../src/services/backgroundLocation";
 import { getPremium } from "../src/lib/premium";
@@ -24,6 +25,8 @@ type SessionData = {
   from_address: string;
   to_address: string;
   expected_arrival_time?: string | null;
+  share_token?: string | null;
+  share_live?: boolean;
 };
 
 const darkMapStyle = [
@@ -40,7 +43,13 @@ const darkMapStyle = [
 
 export default function TrackingScreen() {
   const router = useRouter();
-  const { sessionId, mode } = useLocalSearchParams<{ sessionId?: string; mode?: RouteMode }>();
+  const { sessionId, mode, shareLiveLocation, autoDisableShareOnArrival, shareToken } = useLocalSearchParams<{
+    sessionId?: string;
+    mode?: RouteMode;
+    shareLiveLocation?: string;
+    autoDisableShareOnArrival?: string;
+    shareToken?: string;
+  }>();
   const [checking, setChecking] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [session, setSession] = useState<SessionData | null>(null);
@@ -49,11 +58,30 @@ export default function TrackingScreen() {
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [backgroundOn, setBackgroundOn] = useState(false);
   const [bgError, setBgError] = useState<string | null>(null);
+  const [autoStartAttempted, setAutoStartAttempted] = useState(false);
+  const [arrivalConfirmed, setArrivalConfirmed] = useState(false);
+  const [arrivalMessage, setArrivalMessage] = useState<string | null>(null);
   const [premium, setPremiumState] = useState(false);
   const [premiumChecked, setPremiumChecked] = useState(false);
   const hasGoogleKey = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
   const routeMode = useMemo<RouteMode>(() => mode ?? "walking", [mode]);
+  const liveSharingRequested = useMemo(
+    () => shareLiveLocation === "1" || shareLiveLocation === "true",
+    [shareLiveLocation]
+  );
+  const autoDisableOnArrival = useMemo(
+    () => !(autoDisableShareOnArrival === "0" || autoDisableShareOnArrival === "false"),
+    [autoDisableShareOnArrival]
+  );
+  const activeShareToken = useMemo(
+    () => (shareToken && String(shareToken).trim().length > 0 ? String(shareToken) : session?.share_token ?? null),
+    [shareToken, session?.share_token]
+  );
+  const friendViewLink = useMemo(() => {
+    if (!session?.id || !activeShareToken) return null;
+    return buildFriendViewLink({ sessionId: session.id, shareToken: activeShareToken });
+  }, [session?.id, activeShareToken]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -79,7 +107,9 @@ export default function TrackingScreen() {
           id: data.id,
           from_address: data.from_address,
           to_address: data.to_address,
-          expected_arrival_time: data.expected_arrival_time ?? null
+          expected_arrival_time: data.expected_arrival_time ?? null,
+          share_token: data.share_token ?? null,
+          share_live: Boolean(data.share_live)
         });
       }
     })();
@@ -123,6 +153,35 @@ export default function TrackingScreen() {
       subscription?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!liveSharingRequested || !session?.id || backgroundOn || arrivalConfirmed || autoStartAttempted) {
+      return;
+    }
+    (async () => {
+      try {
+        setAutoStartAttempted(true);
+        setBgError(null);
+        const token = activeShareToken ?? createLiveShareToken();
+        await setSessionLiveShare({
+          sessionId: session.id,
+          enabled: true,
+          shareToken: token
+        });
+        await startBackgroundTracking(session.id);
+        setBackgroundOn(true);
+      } catch (error: any) {
+        setBgError(error?.message ?? "Impossible d activer le partage de position.");
+      }
+    })();
+  }, [
+    liveSharingRequested,
+    session?.id,
+    backgroundOn,
+    arrivalConfirmed,
+    autoStartAttempted,
+    activeShareToken
+  ]);
 
   if (!checking && !userId) {
     return <Redirect href="/auth" />;
@@ -234,6 +293,14 @@ export default function TrackingScreen() {
 
         <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-xs uppercase text-slate-500">Suivi en arriere-plan</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Partage temps reel: {liveSharingRequested ? "Oui" : "Non"}.
+          </Text>
+          {liveSharingRequested ? (
+            <Text className="mt-1 text-xs text-slate-500">
+              Arret auto apres confirmation d arrivee: {autoDisableOnArrival ? "Oui" : "Non"}.
+            </Text>
+          ) : null}
           {bgError ? (
             <Text className="mt-2 text-sm text-amber-600">{bgError}</Text>
           ) : (
@@ -241,17 +308,54 @@ export default function TrackingScreen() {
               Envoi automatique des positions pendant le trajet.
             </Text>
           )}
+          {liveSharingRequested && friendViewLink ? (
+            <View className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <Text className="text-xs uppercase text-slate-500">Lien vue proche</Text>
+              <Text className="mt-2 text-xs text-slate-700">{friendViewLink}</Text>
+              <View className="mt-3 flex-row gap-2">
+                <TouchableOpacity
+                  className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                  onPress={async () => {
+                    await Share.share({
+                      message: `Suivi de trajet SafeBack: ${friendViewLink}`
+                    });
+                  }}
+                >
+                  <Text className="text-center text-xs font-semibold text-slate-700">Partager</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/friend-view",
+                      params: {
+                        sessionId: session?.id,
+                        shareToken: activeShareToken ?? undefined
+                      }
+                    })
+                  }
+                >
+                  <Text className="text-center text-xs font-semibold text-slate-700">
+                    Ouvrir la vue
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
           <View className="mt-4 flex-row gap-3">
             <TouchableOpacity
               className={`flex-1 rounded-2xl px-4 py-3 ${backgroundOn ? "bg-slate-200" : "bg-black"}`}
               onPress={async () => {
                 if (!session?.id) return;
-                if (!premium) {
-                  router.push("/premium");
-                  return;
-                }
                 try {
                   setBgError(null);
+                  if (liveSharingRequested) {
+                    await setSessionLiveShare({
+                      sessionId: session.id,
+                      enabled: true,
+                      shareToken: activeShareToken ?? createLiveShareToken()
+                    });
+                  }
                   await startBackgroundTracking(session.id);
                   setBackgroundOn(true);
                 } catch (error: any) {
@@ -268,12 +372,64 @@ export default function TrackingScreen() {
               className="flex-1 rounded-2xl border border-slate-200 px-4 py-3"
               onPress={async () => {
                 await stopBackgroundTracking();
+                if (session?.id && liveSharingRequested) {
+                  await setSessionLiveShare({ sessionId: session.id, enabled: false, shareToken: null });
+                }
                 setBackgroundOn(false);
+                setArrivalMessage("Partage de position desactive manuellement.");
               }}
             >
               <Text className="text-center text-sm font-semibold text-slate-700">Arreter</Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            className={`mt-3 rounded-2xl px-4 py-3 ${
+              arrivalConfirmed ? "bg-slate-200" : "bg-emerald-600"
+            }`}
+            onPress={async () => {
+              if (arrivalConfirmed) return;
+              try {
+                if (autoDisableOnArrival && backgroundOn) {
+                  await stopBackgroundTracking();
+                  if (session?.id && liveSharingRequested) {
+                    await setSessionLiveShare({
+                      sessionId: session.id,
+                      enabled: false,
+                      shareToken: null
+                    });
+                  }
+                  setBackgroundOn(false);
+                  setArrivalMessage("Arrivee confirmee. Le partage de position a ete arrete.");
+                } else if (autoDisableOnArrival) {
+                  if (session?.id && liveSharingRequested) {
+                    await setSessionLiveShare({
+                      sessionId: session.id,
+                      enabled: false,
+                      shareToken: null
+                    });
+                  }
+                  setArrivalMessage("Arrivee confirmee. Le partage etait deja inactif.");
+                } else {
+                  setArrivalMessage("Arrivee confirmee. Le partage reste actif jusqu a arret manuel.");
+                }
+                setArrivalConfirmed(true);
+              } catch (error: any) {
+                setBgError(error?.message ?? "Impossible de finaliser la confirmation d arrivee.");
+              }
+            }}
+            disabled={arrivalConfirmed}
+          >
+            <Text
+              className={`text-center text-sm font-semibold ${
+                arrivalConfirmed ? "text-slate-600" : "text-white"
+              }`}
+            >
+              {arrivalConfirmed ? "Arrivee confirmee" : "Je suis bien rentre"}
+            </Text>
+          </TouchableOpacity>
+          {arrivalMessage ? (
+            <Text className="mt-2 text-xs text-slate-500">{arrivalMessage}</Text>
+          ) : null}
         </View>
       </View>
     </SafeAreaView>

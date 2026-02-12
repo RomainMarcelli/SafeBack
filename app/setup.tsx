@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import { StatusBar } from "expo-status-bar";
-import { Redirect, useRouter } from "expo-router";
+import { Link, Redirect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
@@ -19,8 +19,15 @@ import {
   createContact,
   createSessionWithContacts,
   listContacts,
-  listFavoriteAddresses
+  listFavoriteAddresses,
+  setSessionLiveShare
 } from "../src/lib/db";
+import { buildFriendViewLink, createLiveShareToken } from "../src/lib/liveShare";
+import {
+  computeSafetyEscalationSchedule,
+  formatSafetyDelay,
+  getSafetyEscalationConfig
+} from "../src/lib/safetyEscalation";
 import { supabase } from "../src/lib/supabase";
 import { fetchRoute, type RouteMode, type RouteResult } from "../src/lib/routing";
 
@@ -214,10 +221,14 @@ export default function SetupScreen() {
 
   const [showLaunchModal, setShowLaunchModal] = useState(false);
   const [lastSessionId, setLastSessionId] = useState<string | null>(null);
+  const [lastShareToken, setLastShareToken] = useState<string | null>(null);
   const [simulatedMessages, setSimulatedMessages] = useState<SimulatedMessage[]>([]);
   const [notificationStatus, setNotificationStatus] = useState<
     "idle" | "sent" | "blocked" | "expo-go"
   >("idle");
+  const [notificationDetails, setNotificationDetails] = useState("");
+  const [shareLiveLocation, setShareLiveLocation] = useState(false);
+  const [autoDisableShareOnArrival, setAutoDisableShareOnArrival] = useState(true);
 
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -397,19 +408,42 @@ export default function SetupScreen() {
       try {
         setSaving(true);
         setErrorMessage("");
+        setNotificationDetails("");
         const expected = toExpectedArrivalIso(expectedHour, expectedMinute);
+        const safetyConfig = await getSafetyEscalationConfig();
         const session = await createSessionWithContacts({
           from_address: fromAddress.trim(),
           to_address: toAddress.trim(),
           contactIds: selectedContacts,
           expected_arrival_time: expected
         });
+        let liveShareToken: string | null = null;
+        let friendViewLink: string | null = null;
+        if (shareLiveLocation) {
+          liveShareToken = createLiveShareToken();
+          await setSessionLiveShare({
+            sessionId: session.id,
+            enabled: true,
+            shareToken: liveShareToken
+          });
+          friendViewLink = buildFriendViewLink({
+            sessionId: session.id,
+            shareToken: liveShareToken
+          });
+        } else {
+          await setSessionLiveShare({
+            sessionId: session.id,
+            enabled: false,
+            shareToken: null
+          });
+        }
         setLastSessionId(session.id);
+        setLastShareToken(liveShareToken);
         const time = formatNowTime();
         const arrivalText =
           formatTimeParts(expectedHour, expectedMinute) ||
           (routeResult ? `${routeResult.durationMinutes} min estimees` : "heure estimee inconnue");
-        const messageBody = `Je demarre mon trajet a ${time} vers ${toAddress.trim()}. Arrivee prevue : ${arrivalText}.`;
+        const messageBody = `Je demarre mon trajet a ${time} vers ${toAddress.trim()}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
         const messages: SimulatedMessage[] = selectedContactItems.map((contact, index) => ({
           id: `${session.id}-${contact.id}-${index}`,
           contactName: contact.name,
@@ -420,18 +454,21 @@ export default function SetupScreen() {
         }));
         setSimulatedMessages(messages);
 
-        if (messages.length > 0) {
-          if (Constants.appOwnership === "expo") {
-            setNotificationStatus("expo-go");
-          } else {
-            const Notifications = await import("expo-notifications");
-            const current = await Notifications.getPermissionsAsync();
-            let status = current.status;
-            if (status !== "granted") {
-              const requested = await Notifications.requestPermissionsAsync();
-              status = requested.status;
-            }
-            if (status === "granted") {
+        if (Constants.appOwnership === "expo") {
+          setNotificationStatus("expo-go");
+          setNotificationDetails(
+            "Planification des alertes indisponible dans Expo Go. Utilise un build dev pour tester."
+          );
+        } else {
+          const Notifications = await import("expo-notifications");
+          const current = await Notifications.getPermissionsAsync();
+          let status = current.status;
+          if (status !== "granted") {
+            const requested = await Notifications.requestPermissionsAsync();
+            status = requested.status;
+          }
+          if (status === "granted") {
+            if (messages.length > 0) {
               await Notifications.scheduleNotificationAsync({
                 content: {
                   title: "SafeBack (test)",
@@ -439,10 +476,52 @@ export default function SetupScreen() {
                 },
                 trigger: null
               });
-              setNotificationStatus("sent");
-            } else {
-              setNotificationStatus("blocked");
             }
+            if (safetyConfig.enabled) {
+              const schedule = computeSafetyEscalationSchedule({
+                config: safetyConfig,
+                expectedArrivalIso: expected,
+                routeDurationMinutes: routeResult?.durationMinutes ?? null
+              });
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "SafeBack - Verification trajet",
+                  body: "Toujours pas rentre ? Confirme ton arrivee ou previens tes proches."
+                },
+                trigger: {
+                  type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                  seconds: schedule.reminderDelaySeconds,
+                  repeats: false
+                }
+              });
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "SafeBack - Escalade proches",
+                  body:
+                    messages.length > 0
+                      ? `Aucune confirmation. Pense a prevenir tes ${messages.length} proche(s).`
+                      : "Aucune confirmation. Ajoute des proches a prevenir pour activer l escalade."
+                },
+                trigger: {
+                  type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                  seconds: schedule.closeContactsDelaySeconds,
+                  repeats: false
+                }
+              });
+              setNotificationDetails(
+                `Alertes planifiees: rappel a ${formatSafetyDelay(
+                  safetyConfig.reminderDelayMinutes
+                )}, escalation proches a ${formatSafetyDelay(
+                  safetyConfig.closeContactsDelayMinutes
+                )}.`
+              );
+            } else {
+              setNotificationDetails("Alertes de retard desactivees dans les reglages.");
+            }
+            setNotificationStatus("sent");
+          } else {
+            setNotificationStatus("blocked");
+            setNotificationDetails("Autorisation notifications refusee sur cet appareil.");
           }
         }
         setShowLaunchModal(true);
@@ -728,6 +807,97 @@ export default function SetupScreen() {
           </TouchableOpacity>
         </View>
 
+        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase text-slate-500">Alertes de retard</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Configure les delais (30 min, 1 h, 2 h...) pour le rappel et l escalation proches.
+          </Text>
+          <Link href="/safety-alerts" asChild>
+            <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Ouvrir les reglages d alerte
+              </Text>
+            </TouchableOpacity>
+          </Link>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase text-slate-500">Partage de position</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Active le partage en temps reel avec les proches selectionnes au demarrage du trajet.
+          </Text>
+          <View className="mt-3 flex-row gap-2">
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                shareLiveLocation ? "bg-black" : "border border-slate-200 bg-white"
+              }`}
+              onPress={() => setShareLiveLocation(true)}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  shareLiveLocation ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Oui
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                !shareLiveLocation ? "bg-black" : "border border-slate-200 bg-white"
+              }`}
+              onPress={() => setShareLiveLocation(false)}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  !shareLiveLocation ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Non
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text className="mt-4 text-xs uppercase text-slate-500">
+            Arret auto quand je suis bien rentre
+          </Text>
+          <View className="mt-2 flex-row gap-2">
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                autoDisableShareOnArrival ? "bg-black" : "border border-slate-200 bg-white"
+              } ${!shareLiveLocation ? "opacity-40" : ""}`}
+              onPress={() => {
+                if (!shareLiveLocation) return;
+                setAutoDisableShareOnArrival(true);
+              }}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  autoDisableShareOnArrival ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Oui
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                !autoDisableShareOnArrival ? "bg-black" : "border border-slate-200 bg-white"
+              } ${!shareLiveLocation ? "opacity-40" : ""}`}
+              onPress={() => {
+                if (!shareLiveLocation) return;
+                setAutoDisableShareOnArrival(false);
+              }}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  !autoDisableShareOnArrival ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Non
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <Text className="mt-8 text-sm font-semibold text-slate-800">Contacts a prevenir</Text>
 
         {selectedContactItems.length > 0 ? (
@@ -873,6 +1043,9 @@ export default function SetupScreen() {
                     ? "Notifications locales non supportees dans Expo Go."
                     : "Notification locale non envoyee."}
             </Text>
+            {notificationDetails ? (
+              <Text className="mt-2 text-xs text-slate-500">{notificationDetails}</Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -912,7 +1085,13 @@ export default function SetupScreen() {
                   if (lastSessionId) {
                     router.push({
                       pathname: "/tracking",
-                      params: { sessionId: lastSessionId, mode: routeMode }
+                      params: {
+                        sessionId: lastSessionId,
+                        mode: routeMode,
+                        shareLiveLocation: shareLiveLocation ? "1" : "0",
+                        autoDisableShareOnArrival: autoDisableShareOnArrival ? "1" : "0",
+                        shareToken: lastShareToken ?? undefined
+                      }
                     });
                   }
                 }}

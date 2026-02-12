@@ -76,6 +76,23 @@ export default function HomeScreen() {
         </View>
 
         <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-[1px] text-slate-500">Message rapide</Text>
+          <Text className="mt-2 text-xl font-bold text-slate-900">Message predefini</Text>
+          <Text className="mt-2 text-sm leading-5 text-slate-600">
+            Configure un texte rapide a envoyer a tes proches. Par defaut: Je suis bien rentre.
+          </Text>
+
+          <Link href="/predefined-message" asChild>
+            <TouchableOpacity className="mt-4 flex-row items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color="#0f172a" />
+              <Text className="ml-2 text-sm font-semibold text-slate-900">
+                Configurer le message
+              </Text>
+            </TouchableOpacity>
+          </Link>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-[1px] text-slate-500">Etape 2</Text>
           <Text className="mt-2 text-xl font-bold text-slate-900">Demarrer un trajet</Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
@@ -97,13 +114,22 @@ export default function HomeScreen() {
           </Link>
         </View>
 
-        <View className="mt-4 flex-row items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
+        <View className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
           <Text className="text-sm text-slate-600">Besoin d options avancees ?</Text>
-          <Link href="/premium" asChild>
-            <TouchableOpacity className="rounded-xl bg-slate-900 px-3 py-2">
-              <Text className="text-xs font-semibold text-white">Premium</Text>
-            </TouchableOpacity>
-          </Link>
+          <View className="mt-3 flex-row gap-2">
+            <Link href="/safety-alerts" asChild>
+              <TouchableOpacity className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <Text className="text-center text-xs font-semibold text-slate-700">
+                  Alertes retard
+                </Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/premium" asChild>
+              <TouchableOpacity className="flex-1 rounded-xl bg-slate-900 px-3 py-2">
+                <Text className="text-center text-xs font-semibold text-white">Premium</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
         </View>
       </View>
     </SafeAreaView>

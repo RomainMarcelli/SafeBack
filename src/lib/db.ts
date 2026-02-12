@@ -1,5 +1,14 @@
 import { supabase } from "./supabase";
 import type { Contact, FavoriteAddress, LocationPoint, Profile, Session } from "../types/db";
+import type { SharedLocationPoint } from "./liveShare";
+
+export type SharedSessionSnapshot = {
+  session_id: string;
+  from_address: string;
+  to_address: string;
+  expected_arrival_time?: string | null;
+  points: SharedLocationPoint[];
+};
 
 export async function listFavoriteAddresses(): Promise<FavoriteAddress[]> {
   const { data, error } = await supabase
@@ -146,6 +155,46 @@ export async function listSessions(): Promise<Session[]> {
 export async function deleteSession(id: string) {
   const { error } = await supabase.from("sessions").delete().eq("id", id);
   if (error) throw error;
+}
+
+export async function setSessionLiveShare(params: {
+  sessionId: string;
+  enabled: boolean;
+  shareToken?: string | null;
+}): Promise<{ share_live: boolean; share_token: string | null }> {
+  const payload: { share_live: boolean; share_token?: string | null } = {
+    share_live: params.enabled
+  };
+  if (params.enabled) {
+    payload.share_token = params.shareToken ?? null;
+  } else {
+    payload.share_token = null;
+  }
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .update(payload)
+    .eq("id", params.sessionId)
+    .select("share_live, share_token")
+    .single();
+  if (error) throw error;
+  return {
+    share_live: Boolean(data.share_live),
+    share_token: data.share_token ?? null
+  };
+}
+
+export async function getSharedSessionSnapshot(params: {
+  sessionId: string;
+  shareToken: string;
+}): Promise<SharedSessionSnapshot | null> {
+  const { data, error } = await supabase.rpc("get_shared_session_snapshot", {
+    p_session_id: params.sessionId,
+    p_share_token: params.shareToken
+  });
+  if (error) throw error;
+  if (!data) return null;
+  return data as SharedSessionSnapshot;
 }
 
 export async function insertLocationPoint(payload: {

@@ -196,6 +196,26 @@ export default function AccountScreen() {
             Mes trajets
           </Link>
         </View>
+        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <Link href="/help" className="text-center text-sm font-semibold text-slate-800">
+            Aide / FAQ
+          </Link>
+        </View>
+        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <Link href="/about" className="text-center text-sm font-semibold text-slate-800">
+            A propos
+          </Link>
+        </View>
+        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <Link href="/legal" className="text-center text-sm font-semibold text-slate-800">
+            Mentions legales
+          </Link>
+        </View>
+        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <Link href="/safety-alerts" className="text-center text-sm font-semibold text-slate-800">
+            Reglages alertes retard
+          </Link>
+        </View>
       </View>
     </SafeAreaView>
   );
