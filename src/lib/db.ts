@@ -28,6 +28,26 @@ export async function listContacts(): Promise<Contact[]> {
   return data as Contact[];
 }
 
+export async function listSessionContacts(sessionId: string): Promise<Contact[]> {
+  const { data: links, error: linksError } = await supabase
+    .from("session_contacts")
+    .select("contact_id")
+    .eq("session_id", sessionId);
+  if (linksError) throw linksError;
+
+  const contactIds = (links ?? [])
+    .map((row: any) => row.contact_id as string | null | undefined)
+    .filter((value): value is string => Boolean(value));
+  if (contactIds.length === 0) return [];
+
+  const { data: contacts, error: contactsError } = await supabase
+    .from("contacts")
+    .select("*")
+    .in("id", contactIds);
+  if (contactsError) throw contactsError;
+  return (contacts ?? []) as Contact[];
+}
+
 export async function getProfile(): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
@@ -85,6 +105,7 @@ export async function createContact(payload: {
   name: string;
   channel: Contact["channel"];
   phone?: string;
+  email?: string | null;
 }): Promise<Contact> {
   const { data, error } = await supabase
     .from("contacts")

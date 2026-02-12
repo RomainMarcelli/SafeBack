@@ -3,7 +3,9 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  Linking,
   Modal,
+  Platform,
   Text,
   TextInput,
   TouchableOpacity,
@@ -23,15 +25,17 @@ import {
   listContacts,
   listFavoriteAddresses,
   setSessionLiveShare
-} from "../src/lib/db";
-import { buildFriendViewLink, createLiveShareToken } from "../src/lib/liveShare";
+} from "../../src/lib/db";
+import { setActiveSessionId } from "../../src/lib/activeSession";
+import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/liveShare";
+import { createNotificationDispatchPlan, type NotifyMode } from "../../src/lib/notifyChannels";
 import {
   computeSafetyEscalationSchedule,
   formatSafetyDelay,
   getSafetyEscalationConfig
-} from "../src/lib/safetyEscalation";
-import { supabase } from "../src/lib/supabase";
-import { fetchRoute, type RouteMode, type RouteResult } from "../src/lib/routing";
+} from "../../src/lib/safetyEscalation";
+import { supabase } from "../../src/lib/supabase";
+import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/routing";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -47,6 +51,7 @@ type ContactItem = {
   name: string;
   channel: "sms" | "whatsapp" | "call";
   phone?: string;
+  email?: string | null;
 };
 
 type FavoriteAddress = {
@@ -58,8 +63,9 @@ type FavoriteAddress = {
 type SimulatedMessage = {
   id: string;
   contactName: string;
-  channel: "sms" | "whatsapp" | "call";
+  channel: "sms" | "whatsapp" | "call" | "email" | "app";
   phone?: string;
+  email?: string | null;
   body: string;
   sentAt: string;
 };
@@ -157,6 +163,14 @@ function formatNowTime() {
   const hours = String(now.getHours()).padStart(2, "0");
   const minutes = String(now.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function notifyModeLabel(mode: NotifyMode) {
+  if (mode === "app") return "Application";
+  if (mode === "sms") return "SMS";
+  if (mode === "email") return "Email";
+  if (mode === "whatsapp") return "WhatsApp";
+  return "Auto";
 }
 
 function roundMinutesToStep(date: Date, step: number) {
@@ -285,6 +299,7 @@ export default function SetupScreen() {
     "idle" | "sent" | "blocked" | "expo-go"
   >("idle");
   const [notificationDetails, setNotificationDetails] = useState("");
+  const [notifyMode, setNotifyMode] = useState<NotifyMode>("auto");
   const [shareLiveLocation, setShareLiveLocation] = useState(false);
   const [autoDisableShareOnArrival, setAutoDisableShareOnArrival] = useState(true);
 
@@ -572,6 +587,7 @@ export default function SetupScreen() {
           contactIds: selectedContacts,
           expected_arrival_time: expected
         });
+        await setActiveSessionId(session.id);
         let liveShareToken: string | null = null;
         let friendViewLink: string | null = null;
         if (shareLiveLocation) {
@@ -599,22 +615,56 @@ export default function SetupScreen() {
           formatTimeParts(expectedHour, expectedMinute) ||
           (routeResult ? `${routeResult.durationMinutes} min estimees` : "heure estimee inconnue");
         const messageBody = `Je demarre mon trajet a ${time} vers ${toAddress.trim()}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
+        const subject = `SafeBack - Demarrage trajet ${time}`;
         const messages: SimulatedMessage[] = selectedContactItems.map((contact, index) => ({
           id: `${session.id}-${contact.id}-${index}`,
           contactName: contact.name,
-          channel: contact.channel,
+          channel: notifyMode === "auto" ? contact.channel : notifyMode,
           phone: contact.phone,
+          email: contact.email ?? null,
           body: messageBody,
           sentAt: time
         }));
         setSimulatedMessages(messages);
 
+        const dispatchPlan = createNotificationDispatchPlan({
+          mode: notifyMode,
+          contacts: selectedContactItems,
+          subject,
+          body: messageBody,
+          platform: Platform.OS === "ios" ? "ios" : "android"
+        });
+
+        const openedChannels: string[] = [];
+        const openExternalChannel = async (url: string | null, label: string) => {
+          if (!url) return;
+          const canOpen = await Linking.canOpenURL(url);
+          if (!canOpen) {
+            dispatchPlan.issues.push(`${label} indisponible sur cet appareil.`);
+            return;
+          }
+          await Linking.openURL(url);
+          openedChannels.push(label);
+        };
+
+        await openExternalChannel(dispatchPlan.smsUrl, "SMS");
+        await openExternalChannel(dispatchPlan.mailUrl, "Email");
+        await openExternalChannel(dispatchPlan.whatsappUrl, "WhatsApp");
+
+        let appNotificationsScheduled = false;
+        let notificationBlocked = false;
+        const notificationNotes: string[] = [];
+
         if (Constants.appOwnership === "expo") {
-          setNotificationStatus("expo-go");
-          setNotificationDetails(
-            "Planification des alertes indisponible dans Expo Go. Utilise un build dev pour tester."
-          );
-        } else {
+          if (dispatchPlan.needsInAppAlert || safetyConfig.enabled) {
+            notificationNotes.push(
+              "Planification des alertes indisponible dans Expo Go. Utilise un build dev pour tester."
+            );
+          }
+          if (dispatchPlan.needsInAppAlert && messages.length === 0) {
+            notificationNotes.push("Aucun proche selectionne pour le canal application.");
+          }
+        } else if (dispatchPlan.needsInAppAlert || safetyConfig.enabled) {
           const Notifications = await import("expo-notifications");
           const current = await Notifications.getPermissionsAsync();
           let status = current.status;
@@ -622,15 +672,19 @@ export default function SetupScreen() {
             const requested = await Notifications.requestPermissionsAsync();
             status = requested.status;
           }
+
           if (status === "granted") {
-            if (messages.length > 0) {
+            if (dispatchPlan.needsInAppAlert && messages.length > 0) {
               await Notifications.scheduleNotificationAsync({
                 content: {
-                  title: "SafeBack (test)",
-                  body: `Message simule envoye a ${messages.length} contact(s).`
+                  title: "SafeBack",
+                  body: `Alerte de depart preparee pour ${messages.length} proche(s) via ${notifyModeLabel(
+                    notifyMode
+                  )}.`
                 },
                 trigger: null
               });
+              appNotificationsScheduled = true;
             }
             if (safetyConfig.enabled) {
               const schedule = computeSafetyEscalationSchedule({
@@ -663,7 +717,8 @@ export default function SetupScreen() {
                   repeats: false
                 }
               });
-              setNotificationDetails(
+              appNotificationsScheduled = true;
+              notificationNotes.push(
                 `Alertes planifiees: rappel a ${formatSafetyDelay(
                   safetyConfig.reminderDelayMinutes
                 )}, escalation proches a ${formatSafetyDelay(
@@ -671,14 +726,38 @@ export default function SetupScreen() {
                 )}.`
               );
             } else {
-              setNotificationDetails("Alertes de retard desactivees dans les reglages.");
+              notificationNotes.push("Alertes de retard desactivees dans les reglages.");
             }
-            setNotificationStatus("sent");
           } else {
-            setNotificationStatus("blocked");
-            setNotificationDetails("Autorisation notifications refusee sur cet appareil.");
+            notificationBlocked = true;
+            notificationNotes.push("Autorisation notifications refusee sur cet appareil.");
           }
         }
+
+        const hasAnyDispatch =
+          openedChannels.length > 0 || appNotificationsScheduled || dispatchPlan.needsInAppAlert;
+        if (notificationBlocked && openedChannels.length === 0 && !appNotificationsScheduled) {
+          setNotificationStatus("blocked");
+        } else if (Constants.appOwnership === "expo" && (dispatchPlan.needsInAppAlert || safetyConfig.enabled)) {
+          setNotificationStatus("expo-go");
+        } else if (hasAnyDispatch) {
+          setNotificationStatus("sent");
+        } else {
+          setNotificationStatus("blocked");
+        }
+
+        const dispatchSummary: string[] = [];
+        if (openedChannels.length > 0) {
+          dispatchSummary.push(`Canaux externes ouverts: ${openedChannels.join(", ")}.`);
+        }
+        if (dispatchPlan.issues.length > 0) {
+          dispatchSummary.push(dispatchPlan.issues.join(" "));
+        }
+        dispatchSummary.push(...notificationNotes);
+        if (dispatchSummary.length === 0) {
+          dispatchSummary.push("Aucun canal d envoi disponible.");
+        }
+        setNotificationDetails(dispatchSummary.join(" "));
         setShowLaunchModal(true);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur lors du lancement.");
@@ -1117,6 +1196,39 @@ export default function SetupScreen() {
             </View>
           ) : null}
 
+          <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">
+              Type d envoi aux proches
+            </Text>
+            <Text className="mt-2 text-sm text-slate-600">
+              Choisis comment prevenir tes proches au depart.
+            </Text>
+            <View className="mt-3 flex-row flex-wrap gap-2">
+              {([
+                { key: "auto", label: "Auto" },
+                { key: "app", label: "Application" },
+                { key: "sms", label: "SMS" },
+                { key: "email", label: "Email" },
+                { key: "whatsapp", label: "WhatsApp" }
+              ] as const).map((item) => {
+                const active = notifyMode === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    className={`rounded-full px-4 py-2 ${
+                      active ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                    }`}
+                    onPress={() => setNotifyMode(item.key)}
+                  >
+                    <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-700"}`}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
           <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
             <Text className="text-xs uppercase tracking-widest text-slate-500">
               Ajouter un contact
@@ -1230,7 +1342,7 @@ export default function SetupScreen() {
               Simulation d envoi (DEV / TEST)
             </Text>
             <Text className="mt-2 text-sm text-slate-600">
-              L app simule l envoi de messages et log l evenement.
+              Envoi configure: {notifyModeLabel(notifyMode)}.
             </Text>
             <View className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
               {simulatedMessages.map((item) => (
@@ -1242,6 +1354,9 @@ export default function SetupScreen() {
                   <Text className="mt-1 text-xs text-slate-500">
                     {formatPhone(item.phone ?? "")}
                   </Text>
+                  {item.email ? (
+                    <Text className="mt-1 text-xs text-slate-500">{item.email}</Text>
+                  ) : null}
                 </View>
               ))}
             </View>
@@ -1395,3 +1510,4 @@ export default function SetupScreen() {
     </SafeAreaView>
   );
 }
+

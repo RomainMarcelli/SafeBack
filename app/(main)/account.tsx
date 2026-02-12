@@ -4,8 +4,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getProfile, upsertProfile } from "../src/lib/db";
-import { supabase } from "../src/lib/supabase";
+import { getProfile, upsertProfile } from "../../src/lib/db";
+import { clearActiveSessionId } from "../../src/lib/activeSession";
+import { supabase } from "../../src/lib/supabase";
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -92,6 +93,7 @@ export default function AccountScreen() {
       setSigningOut(true);
       setErrorMessage("");
       setSuccessMessage("");
+      await clearActiveSessionId();
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       router.replace("/auth");
@@ -259,6 +261,31 @@ export default function AccountScreen() {
           </View>
 
           <View className="mt-2 flex-row gap-2">
+            <Link href="/forgotten-trip" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="location-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Trajet oublie</Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/messages" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="chatbubble-ellipses-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Messages</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/notifications" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="notifications-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Notifications</Text>
+              </TouchableOpacity>
+            </Link>
+            <View className="flex-1" />
+          </View>
+
+          <View className="mt-2 flex-row gap-2">
             <Link href="/about" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
                 <Ionicons name="information-circle-outline" size={18} color="#334155" />
@@ -277,3 +304,4 @@ export default function AccountScreen() {
     </SafeAreaView>
   );
 }
+

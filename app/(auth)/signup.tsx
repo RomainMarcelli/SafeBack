@@ -4,8 +4,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useRouter } from "expo-router";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { upsertProfile } from "../src/lib/db";
-import { supabase } from "../src/lib/supabase";
+import { upsertProfile } from "../../src/lib/db";
+import { supabase } from "../../src/lib/supabase";
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -212,4 +212,5 @@ export default function SignupScreen() {
     </SafeAreaView>
   );
 }
+
 

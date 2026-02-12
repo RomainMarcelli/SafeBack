@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link, Redirect } from "expo-router";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { supabase } from "../src/lib/supabase";
+import { supabase } from "../../src/lib/supabase";
 
 export default function AuthScreen() {
   const [identifier, setIdentifier] = useState("");
@@ -150,3 +150,4 @@ export default function AuthScreen() {
     </SafeAreaView>
   );
 }
+

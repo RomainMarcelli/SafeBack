@@ -3,8 +3,8 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { deleteAllSessions, deleteSession, listSessions } from "../src/lib/db";
-import { supabase } from "../src/lib/supabase";
+import { deleteAllSessions, deleteSession, listSessions } from "../../src/lib/db";
+import { supabase } from "../../src/lib/supabase";
 
 type SessionItem = {
   id: string;
@@ -249,3 +249,4 @@ export default function TripsScreen() {
     </SafeAreaView>
   );
 }
+

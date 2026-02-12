@@ -10,6 +10,7 @@ export type Contact = {
   name: string;
   channel: "sms" | "whatsapp" | "call";
   phone?: string;
+  email?: string | null;
   created_at?: string;
 };
 

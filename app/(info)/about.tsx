@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import pkg from "../package.json";
+import pkg from "../../package.json";
 
 const CONTACT_EMAIL = "support@safeback.app";
 
@@ -53,4 +53,3 @@ export default function AboutScreen() {
     </SafeAreaView>
   );
 }
-

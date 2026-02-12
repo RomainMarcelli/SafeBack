@@ -3,8 +3,8 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getPremium, setPremium } from "../src/lib/premium";
-import { supabase } from "../src/lib/supabase";
+import { getPremium, setPremium } from "../../src/lib/premium";
+import { supabase } from "../../src/lib/supabase";
 
 export default function PremiumScreen() {
   const router = useRouter();
@@ -143,3 +143,4 @@ export default function PremiumScreen() {
     </SafeAreaView>
   );
 }
+

@@ -14,8 +14,11 @@ create table if not exists contacts (
   name text not null,
   channel contact_channel not null default 'sms',
   phone text,
+  email text,
   created_at timestamptz default now()
 );
+
+alter table contacts add column if not exists email text;
 
 create table if not exists sessions (
   id uuid primary key default gen_random_uuid(),

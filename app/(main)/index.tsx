@@ -4,7 +4,7 @@ import { Link, Redirect } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { supabase } from "../src/lib/supabase";
+import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -95,6 +95,29 @@ export default function HomeScreen() {
             </Link>
           </View>
 
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/messages" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Messagerie
+                </Text>
+                <Text className="mt-1 text-center text-sm font-semibold text-slate-800">
+                  Discussions proches
+                </Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/notifications" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Alertes
+                </Text>
+                <Text className="mt-1 text-center text-sm font-semibold text-slate-800">
+                  Centre notif
+                </Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
           <Link href="/predefined-message" asChild>
             <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
               <Text className="text-center text-sm font-semibold text-slate-800">
@@ -116,9 +139,17 @@ export default function HomeScreen() {
               </Text>
             </TouchableOpacity>
           </Link>
+          <Link href="/forgotten-trip" asChild>
+            <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-slate-800">
+                Detection trajet oublie
+              </Text>
+            </TouchableOpacity>
+          </Link>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
 

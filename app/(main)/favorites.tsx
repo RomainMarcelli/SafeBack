@@ -11,8 +11,8 @@ import {
   deleteFavoriteAddress,
   listContacts,
   listFavoriteAddresses
-} from "../src/lib/db";
-import { supabase } from "../src/lib/supabase";
+} from "../../src/lib/db";
+import { supabase } from "../../src/lib/supabase";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -137,6 +137,8 @@ export default function FavoritesScreen() {
   const [addrQuery, setAddrQuery] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactChannel, setContactChannel] = useState<"sms" | "whatsapp" | "call">("sms");
   const [contactQuery, setContactQuery] = useState("");
   const [phoneContacts, setPhoneContacts] = useState<Contacts.Contact[]>([]);
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
@@ -197,18 +199,22 @@ export default function FavoritesScreen() {
   };
 
   const addContact = async () => {
-    if (!contactName.trim() || !contactPhone.trim()) return;
+    if (!contactName.trim()) return;
+    if (!contactPhone.trim() && !contactEmail.trim()) return;
     try {
       setSaving(true);
       setErrorMessage("");
       const saved = await createContact({
         name: contactName.trim(),
-        phone: formatPhone(contactPhone.trim()),
-        channel: "sms"
+        phone: contactPhone.trim() ? formatPhone(contactPhone.trim()) : undefined,
+        email: contactEmail.trim() || null,
+        channel: contactChannel
       });
       setContacts((prev) => [saved, ...prev]);
       setContactName("");
       setContactPhone("");
+      setContactEmail("");
+      setContactChannel("sms");
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
     } finally {
@@ -239,6 +245,7 @@ export default function FavoritesScreen() {
     if (!number) return;
     setContactName(contact.name ?? "");
     setContactPhone(formatPhone(number));
+    setContactChannel("sms");
     setShowPhoneContacts(false);
   };
 
@@ -258,7 +265,8 @@ export default function FavoritesScreen() {
     return contacts.filter((item) => {
       const name = String(item.name ?? "").toLowerCase();
       const phone = String(item.phone ?? "").toLowerCase();
-      return name.includes(query) || phone.includes(query);
+      const email = String(item.email ?? "").toLowerCase();
+      return name.includes(query) || phone.includes(query) || email.includes(query);
     });
   }, [contacts, contactQuery]);
 
@@ -272,6 +280,11 @@ export default function FavoritesScreen() {
     if (!phone.trim()) return;
     const clean = phone.replace(/\s/g, "");
     await Linking.openURL(`${action}:${clean}`);
+  };
+
+  const openMail = async (email: string) => {
+    if (!email.trim()) return;
+    await Linking.openURL(`mailto:${email.trim()}`);
   };
 
   return (
@@ -436,6 +449,37 @@ export default function FavoritesScreen() {
             value={contactPhone}
             onChangeText={(text) => setContactPhone(formatPhone(text))}
           />
+          <TextInput
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
+            placeholder="Email (optionnel)"
+            placeholderTextColor="#94a3b8"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={contactEmail}
+            onChangeText={setContactEmail}
+          />
+          <View className="mt-3 flex-row gap-2">
+            {([
+              { key: "sms", label: "SMS" },
+              { key: "whatsapp", label: "WhatsApp" },
+              { key: "call", label: "Appel" }
+            ] as const).map((item) => {
+              const active = contactChannel === item.key;
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  className={`flex-1 rounded-2xl px-3 py-2 ${
+                    active ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                  }`}
+                  onPress={() => setContactChannel(item.key)}
+                >
+                  <Text className={`text-center text-xs font-semibold ${active ? "text-white" : "text-slate-700"}`}>
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <TouchableOpacity
             className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
             onPress={importFromPhone}
@@ -447,10 +491,10 @@ export default function FavoritesScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             className={`mt-3 rounded-2xl px-4 py-3 ${
-              contactName.trim() && contactPhone.trim() ? "bg-[#111827]" : "bg-slate-300"
+              contactName.trim() && (contactPhone.trim() || contactEmail.trim()) ? "bg-[#111827]" : "bg-slate-300"
             }`}
             onPress={addContact}
-            disabled={!contactName.trim() || !contactPhone.trim() || saving}
+            disabled={!contactName.trim() || (!contactPhone.trim() && !contactEmail.trim()) || saving}
           >
             <Text className="text-center text-sm font-semibold text-white">
               Ajouter le contact
@@ -487,6 +531,9 @@ export default function FavoritesScreen() {
                       <Text className="text-xs text-slate-500">
                         {formatPhone(item.phone ?? "")}
                       </Text>
+                      {item.email ? (
+                        <Text className="text-xs text-slate-500">{item.email}</Text>
+                      ) : null}
                     </View>
                     <TouchableOpacity
                       className="h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white"
@@ -517,6 +564,12 @@ export default function FavoritesScreen() {
                     >
                       <Text className="text-center text-xs font-semibold text-white">SMS</Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                      className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                      onPress={() => openMail(item.email ?? "")}
+                    >
+                      <Text className="text-center text-xs font-semibold text-slate-700">Mail</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
               ))}
@@ -533,3 +586,4 @@ export default function FavoritesScreen() {
     </SafeAreaView>
   );
 }
+

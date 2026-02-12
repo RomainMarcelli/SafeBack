@@ -11,8 +11,8 @@ import {
   SAFETY_CLOSE_CONTACT_OPTIONS,
   SAFETY_REMINDER_OPTIONS,
   setSafetyEscalationConfig
-} from "../src/lib/safetyEscalation";
-import { supabase } from "../src/lib/supabase";
+} from "../../src/lib/safetyEscalation";
+import { supabase } from "../../src/lib/supabase";
 
 export default function SafetyAlertsScreen() {
   const router = useRouter();
@@ -98,28 +98,52 @@ export default function SafetyAlertsScreen() {
   const busy = loading || saving;
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
-      <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 40 }}>
-        <View className="mt-4 flex-row items-center">
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
+      <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
-            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Retour
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Alertes de retard</Text>
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              Securite
+            </Text>
+          </View>
         </View>
-        <Text className="mt-2 text-sm text-slate-600">
-          Definis quand relancer l utilisateur et quand declencher l escalation pour les proches.
+
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Alertes de retard</Text>
+        <Text className="mt-2 text-base text-[#475569]">
+          Regle les delais de relance utilisateur et d alerte proches.
         </Text>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Activation</Text>
+        <View className="mt-6 rounded-3xl bg-[#111827] px-5 py-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-300">Resume</Text>
+          <Text className="mt-2 text-2xl font-extrabold text-white">
+            {enabled ? "Actif" : "Desactive"}
+          </Text>
+          <Text className="mt-2 text-sm text-slate-300">
+            {enabled
+              ? `Rappel: ${formatSafetyDelay(reminderDelayMinutes)} | Proches: ${formatSafetyDelay(closeContactsDelayMinutes)}`
+              : "Aucune alerte automatique"}
+          </Text>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Activation</Text>
           <View className="mt-3 flex-row gap-2">
             <TouchableOpacity
               className={`flex-1 rounded-2xl px-3 py-3 ${
-                enabled ? "bg-black" : "border border-slate-200 bg-white"
+                enabled ? "bg-emerald-600" : "border border-slate-200 bg-white"
               }`}
               onPress={() => setEnabled(true)}
             >
@@ -129,7 +153,7 @@ export default function SafetyAlertsScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               className={`flex-1 rounded-2xl px-3 py-3 ${
-                !enabled ? "bg-black" : "border border-slate-200 bg-white"
+                !enabled ? "bg-rose-600" : "border border-slate-200 bg-white"
               }`}
               onPress={() => setEnabled(false)}
             >
@@ -140,11 +164,8 @@ export default function SafetyAlertsScreen() {
           </View>
         </View>
 
-        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">1ere alerte utilisateur</Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            Notification si la personne n est pas rentree apres ce delai.
-          </Text>
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">1ere alerte</Text>
           <View className="mt-3 flex-row flex-wrap gap-2">
             {SAFETY_REMINDER_OPTIONS.map((value) => {
               const active = reminderDelayMinutes === value;
@@ -152,7 +173,7 @@ export default function SafetyAlertsScreen() {
                 <TouchableOpacity
                   key={`reminder-${value}`}
                   className={`rounded-full px-4 py-2 ${
-                    active ? "bg-black" : "border border-slate-200 bg-white"
+                    active ? "bg-amber-500" : "border border-slate-200 bg-white"
                   }`}
                   onPress={() => {
                     setReminderDelayMinutes(value);
@@ -161,7 +182,7 @@ export default function SafetyAlertsScreen() {
                     }
                   }}
                 >
-                  <Text className={active ? "text-white" : "text-slate-700"}>
+                  <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-700"}`}>
                     {formatSafetyDelay(value)}
                   </Text>
                 </TouchableOpacity>
@@ -170,11 +191,8 @@ export default function SafetyAlertsScreen() {
           </View>
         </View>
 
-        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">2eme alerte proches</Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            Notification d escalation pour prevenir les proches si aucun retour.
-          </Text>
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">2eme alerte</Text>
           <View className="mt-3 flex-row flex-wrap gap-2">
             {SAFETY_CLOSE_CONTACT_OPTIONS.map((value) => {
               const active = closeContactsDelayMinutes === value;
@@ -183,14 +201,14 @@ export default function SafetyAlertsScreen() {
                 <TouchableOpacity
                   key={`close-contact-${value}`}
                   className={`rounded-full px-4 py-2 ${
-                    active ? "bg-black" : "border border-slate-200 bg-white"
+                    active ? "bg-sky-600" : "border border-slate-200 bg-white"
                   } ${disabled ? "opacity-40" : ""}`}
                   onPress={() => {
                     if (disabled) return;
                     setCloseContactsDelayMinutes(value);
                   }}
                 >
-                  <Text className={active ? "text-white" : "text-slate-700"}>
+                  <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-700"}`}>
                     {formatSafetyDelay(value)}
                   </Text>
                 </TouchableOpacity>
@@ -199,44 +217,28 @@ export default function SafetyAlertsScreen() {
           </View>
         </View>
 
-        <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Resume</Text>
-          <Text className="mt-2 text-sm text-slate-700">
-            {enabled
-              ? `Actif: rappel a ${formatSafetyDelay(
-                  reminderDelayMinutes
-                )}, puis alerte proches a ${formatSafetyDelay(closeContactsDelayMinutes)}.`
-              : "Desactive: aucune alerte automatique de retard."}
+        {errorMessage ? <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text> : null}
+        {successMessage ? <Text className="mt-3 text-sm text-emerald-600">{successMessage}</Text> : null}
+
+        <TouchableOpacity
+          className={`mt-4 rounded-2xl px-4 py-3 ${busy ? "bg-slate-300" : "bg-[#0F766E]"}`}
+          onPress={save}
+          disabled={busy}
+        >
+          <Text className="text-center text-sm font-semibold text-white">
+            {saving ? "Enregistrement..." : "Enregistrer"}
           </Text>
-
-          {errorMessage ? (
-            <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text>
-          ) : null}
-          {successMessage ? (
-            <Text className="mt-3 text-sm text-emerald-600">{successMessage}</Text>
-          ) : null}
-
-          <TouchableOpacity
-            className={`mt-4 rounded-2xl px-4 py-3 ${busy ? "bg-slate-300" : "bg-black"}`}
-            onPress={save}
-            disabled={busy}
-          >
-            <Text className="text-center text-sm font-semibold text-white">
-              {saving ? "Enregistrement..." : "Enregistrer les reglages"}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-            onPress={reset}
-            disabled={busy}
-          >
-            <Text className="text-center text-sm font-semibold text-slate-700">
-              Revenir au defaut
-            </Text>
-          </TouchableOpacity>
-        </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3"
+          onPress={reset}
+          disabled={busy}
+        >
+          <Text className="text-center text-sm font-semibold text-amber-800">
+            Revenir aux reglages par defaut
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
-

@@ -3,14 +3,19 @@ import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Linking, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
-import { fetchRoute, type RouteMode, type RouteResult } from "../src/lib/routing";
-import { getSessionById, setSessionLiveShare } from "../src/lib/db";
-import { buildFriendViewLink, createLiveShareToken } from "../src/lib/liveShare";
-import { supabase } from "../src/lib/supabase";
-import { startBackgroundTracking, stopBackgroundTracking } from "../src/services/backgroundLocation";
-import { getPremium } from "../src/lib/premium";
+import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/routing";
+import { getSessionById, listSessionContacts, setSessionLiveShare } from "../../src/lib/db";
+import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/liveShare";
+import { supabase } from "../../src/lib/supabase";
+import { startBackgroundTracking, stopBackgroundTracking } from "../../src/services/backgroundLocation";
+import { getPremium } from "../../src/lib/premium";
+import { buildSmsUrl, buildSosMessage } from "../../src/lib/sos";
+import { clearActiveSessionId, setActiveSessionId } from "../../src/lib/activeSession";
+import { sendArrivalSignalToGuardians } from "../../src/lib/messagingDb";
+import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/predefinedMessage";
 
 function formatTime(value?: string | null) {
   if (!value) return "";
@@ -35,6 +40,13 @@ type SessionData = {
   expected_arrival_time?: string | null;
   share_token?: string | null;
   share_live?: boolean;
+};
+
+type SessionContact = {
+  id: string;
+  name: string;
+  phone?: string | null;
+  channel?: "sms" | "whatsapp" | "call";
 };
 
 const darkMapStyle = [
@@ -71,6 +83,10 @@ export default function TrackingScreen() {
   const [arrivalMessage, setArrivalMessage] = useState<string | null>(null);
   const [premium, setPremiumState] = useState(false);
   const [premiumChecked, setPremiumChecked] = useState(false);
+  const [sessionContacts, setSessionContacts] = useState<SessionContact[]>([]);
+  const [sosSending, setSosSending] = useState(false);
+  const [sosError, setSosError] = useState<string | null>(null);
+  const [sosInfo, setSosInfo] = useState<string | null>(null);
   const hasGoogleKey = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
   const routeMode = useMemo<RouteMode>(() => mode ?? "walking", [mode]);
@@ -128,6 +144,7 @@ export default function TrackingScreen() {
     (async () => {
       const data = await getSessionById(sessionId);
       if (data) {
+        await setActiveSessionId(data.id);
         setSession({
           id: data.id,
           from_address: data.from_address,
@@ -139,6 +156,21 @@ export default function TrackingScreen() {
       }
     })();
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!session?.id) {
+      setSessionContacts([]);
+      return;
+    }
+    (async () => {
+      try {
+        const contacts = await listSessionContacts(session.id);
+        setSessionContacts(contacts as SessionContact[]);
+      } catch {
+        setSessionContacts([]);
+      }
+    })();
+  }, [session?.id]);
 
   useEffect(() => {
     if (!session) {
@@ -211,6 +243,73 @@ export default function TrackingScreen() {
   if (!checking && !userId) {
     return null;
   }
+
+  const handleSosLongPress = async () => {
+    if (!session?.id) return;
+    try {
+      setSosSending(true);
+      setSosError(null);
+      setSosInfo(null);
+
+      let latestCoords = coords;
+      if (!latestCoords) {
+        try {
+          const permission = await Location.requestForegroundPermissionsAsync();
+          if (permission.status === "granted") {
+            const position = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced
+            });
+            latestCoords = {
+              lat: position.coords.latitude,
+              lon: position.coords.longitude
+            };
+            setCoords(latestCoords);
+          }
+        } catch {
+          // keep unknown location fallback in SOS message
+        }
+      }
+
+      let contacts = sessionContacts;
+      if (contacts.length === 0) {
+        contacts = (await listSessionContacts(session.id)) as SessionContact[];
+        setSessionContacts(contacts);
+      }
+
+      const recipients = contacts
+        .map((contact) => String(contact.phone ?? "").trim())
+        .filter((phone) => phone.length > 0);
+      if (recipients.length === 0) {
+        throw new Error("Aucun proche avec numero de telephone dans ce trajet.");
+      }
+
+      const body = buildSosMessage({
+        fromAddress: session.from_address,
+        toAddress: session.to_address,
+        coords: latestCoords ? { lat: latestCoords.lat, lon: latestCoords.lon } : null
+      });
+      const smsUrl = buildSmsUrl({
+        phones: recipients,
+        body,
+        platform: Platform.OS === "ios" ? "ios" : "android"
+      });
+      if (!smsUrl) {
+        throw new Error("Impossible de generer le message SOS.");
+      }
+
+      const canOpen = await Linking.canOpenURL(smsUrl);
+      if (!canOpen) {
+        throw new Error("Impossible d ouvrir l application SMS sur cet appareil.");
+      }
+
+      await Linking.openURL(smsUrl);
+      setSosInfo(`Alerte SOS prete pour ${recipients.length} proche(s). Verifie puis envoie.`);
+    } catch (error: any) {
+      setSosError(error?.message ?? "Echec de preparation de l alerte SOS.");
+    } finally {
+      setSosSending(false);
+    }
+  };
 
   const region = routeResult?.coords?.[0]
     ? {
@@ -362,6 +461,43 @@ export default function TrackingScreen() {
           </Text>
         </View>
 
+        <View className="mt-6 rounded-3xl border border-rose-200 bg-rose-50/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-rose-700">SOS discret</Text>
+          <Text className="mt-2 text-sm text-rose-900">
+            Appui long (2 sec) pour preparer un SMS d alerte avec ta position aux proches du trajet.
+          </Text>
+          <Text className="mt-2 text-xs text-rose-700">
+            {sessionContacts.length} proche(s) lie(s) a ce trajet.
+          </Text>
+
+          <TouchableOpacity
+            className={`mt-4 flex-row items-center justify-center rounded-2xl px-4 py-4 ${
+              sosSending ? "bg-rose-200" : "bg-rose-600"
+            }`}
+            delayLongPress={2000}
+            onLongPress={handleSosLongPress}
+            onPress={() => {
+              if (!sosSending) {
+                setSosInfo("Maintiens le bouton 2 secondes pour declencher le SOS.");
+                setSosError(null);
+              }
+            }}
+            disabled={sosSending}
+          >
+            <Ionicons name="warning-outline" size={18} color={sosSending ? "#9f1239" : "#ffffff"} />
+            <Text
+              className={`ml-2 text-sm font-semibold ${
+                sosSending ? "text-rose-900" : "text-white"
+              }`}
+            >
+              {sosSending ? "Preparation..." : "Maintenir pour SOS"}
+            </Text>
+          </TouchableOpacity>
+
+          {sosError ? <Text className="mt-3 text-sm text-red-700">{sosError}</Text> : null}
+          {sosInfo ? <Text className="mt-3 text-sm text-rose-800">{sosInfo}</Text> : null}
+        </View>
+
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">
             Suivi en arriere-plan
@@ -462,6 +598,7 @@ export default function TrackingScreen() {
             onPress={async () => {
               if (arrivalConfirmed) return;
               try {
+                let arrivalNotice = "";
                 if (autoDisableOnArrival && backgroundOn) {
                   await stopBackgroundTracking();
                   if (session?.id && liveSharingRequested) {
@@ -472,7 +609,7 @@ export default function TrackingScreen() {
                     });
                   }
                   setBackgroundOn(false);
-                  setArrivalMessage("Arrivee confirmee. Le partage de position a ete arrete.");
+                  arrivalNotice = "Arrivee confirmee. Le partage de position a ete arrete.";
                 } else if (autoDisableOnArrival) {
                   if (session?.id && liveSharingRequested) {
                     await setSessionLiveShare({
@@ -481,11 +618,25 @@ export default function TrackingScreen() {
                       shareToken: null
                     });
                   }
-                  setArrivalMessage("Arrivee confirmee. Le partage etait deja inactif.");
+                  arrivalNotice = "Arrivee confirmee. Le partage etait deja inactif.";
                 } else {
-                  setArrivalMessage("Arrivee confirmee. Le partage reste actif jusqu a arret manuel.");
+                  arrivalNotice = "Arrivee confirmee. Le partage reste actif jusqu a arret manuel.";
                 }
+
+                try {
+                  const predefinedConfig = await getPredefinedMessageConfig();
+                  const arrivalBody = resolvePredefinedMessage(predefinedConfig);
+                  const result = await sendArrivalSignalToGuardians({ note: arrivalBody });
+                  if (result.conversations > 0) {
+                    arrivalNotice += ` ${result.conversations} proche(s) notifie(s) via la messagerie.`;
+                  }
+                } catch {
+                  arrivalNotice += " Notification proches indisponible.";
+                }
+
+                await clearActiveSessionId();
                 setArrivalConfirmed(true);
+                setArrivalMessage(arrivalNotice);
               } catch (error: any) {
                 setBgError(error?.message ?? "Impossible de finaliser la confirmation d arrivee.");
               }
@@ -508,3 +659,4 @@ export default function TrackingScreen() {
     </SafeAreaView>
   );
 }
+

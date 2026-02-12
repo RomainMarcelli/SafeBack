@@ -58,6 +58,11 @@ function createChain(table: string) {
     lastAction = "eq";
     return chain;
   });
+  chain.in = vi.fn((...args: any[]) => {
+    state.calls.push({ table, action: "in", args });
+    lastAction = "in";
+    return chain;
+  });
   chain.neq = vi.fn((...args: any[]) => {
     state.calls.push({ table, action: "neq", args });
     lastAction = "neq";
@@ -109,6 +114,7 @@ import {
   insertLocationPoint,
   listContacts,
   listFavoriteAddresses,
+  listSessionContacts,
   listSessions,
   getSharedSessionSnapshot,
   setSessionLiveShare,
@@ -417,6 +423,22 @@ describe("db helpers", () => {
     await expect(
       insertLocationPoint({ session_id: "s1", latitude: 1, longitude: 2, accuracy: null })
     ).resolves.toMatchObject({ id: "l1" });
+  });
+
+  it("listSessionContacts resolves contacts linked to a session", async () => {
+    setResult("session_contacts", "eq", {
+      data: [{ contact_id: "c1" }, { contact_id: "c2" }],
+      error: null
+    });
+    setResult("contacts", "in", {
+      data: [{ id: "c1", name: "A" }, { id: "c2", name: "B" }],
+      error: null
+    });
+
+    await expect(listSessionContacts("s1")).resolves.toEqual([
+      { id: "c1", name: "A" },
+      { id: "c2", name: "B" }
+    ]);
   });
 
   it("listSessions throws when query fails", async () => {
