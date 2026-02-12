@@ -4,11 +4,19 @@ import { Link, Redirect } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { clearActiveSessionId } from "../../src/lib/activeSession";
+import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
+import { formatQuickArrivalMessage } from "../../src/lib/homeQuickActions";
+import { sendArrivalSignalToGuardians } from "../../src/lib/messagingDb";
+import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/predefinedMessage";
 import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickInfo, setQuickInfo] = useState("");
+  const [quickError, setQuickError] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -68,6 +76,51 @@ export default function HomeScreen() {
               <Text className="ml-2 text-base font-semibold text-white">Nouveau trajet</Text>
             </TouchableOpacity>
           </Link>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Widget accueil</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Actions rapides en 1 clic sans passer par plusieurs ecrans.
+          </Text>
+          <View className="mt-3 flex-row gap-2">
+            <Link href="/setup" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl bg-[#111827] px-4 py-4">
+                <Text className="text-center text-sm font-semibold text-white">Lancer un trajet</Text>
+              </TouchableOpacity>
+            </Link>
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-4 py-4 ${quickBusy ? "bg-slate-300" : "bg-emerald-600"}`}
+              onPress={async () => {
+                try {
+                  setQuickBusy(true);
+                  setQuickError("");
+                  setQuickInfo("");
+                  const config = await getPredefinedMessageConfig();
+                  const message = resolvePredefinedMessage(config);
+                  const result = await sendArrivalSignalToGuardians({ note: message });
+                  await clearActiveSessionId();
+                  await syncSafeBackHomeWidget({
+                    status: "arrived",
+                    note: "Confirmation envoyee",
+                    updatedAtIso: new Date().toISOString()
+                  });
+                  setQuickInfo(formatQuickArrivalMessage(result.conversations));
+                } catch (error: any) {
+                  setQuickError(error?.message ?? "Impossible d envoyer la confirmation rapide.");
+                } finally {
+                  setQuickBusy(false);
+                }
+              }}
+              disabled={quickBusy}
+            >
+              <Text className="text-center text-sm font-semibold text-white">
+                {quickBusy ? "Envoi..." : "Je suis bien rentre"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {quickInfo ? <Text className="mt-3 text-sm text-emerald-700">{quickInfo}</Text> : null}
+          {quickError ? <Text className="mt-3 text-sm text-red-600">{quickError}</Text> : null}
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">

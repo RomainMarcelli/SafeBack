@@ -35,10 +35,26 @@ create table if not exists public.contacts (
   channel public.contact_channel not null default 'sms',
   phone text,
   email text,
+  contact_group text not null default 'friends',
   created_at timestamptz default now()
 );
 
 alter table public.contacts add column if not exists email text;
+alter table public.contacts add column if not exists contact_group text not null default 'friends';
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'contacts_contact_group_check'
+      and conrelid = 'public.contacts'::regclass
+  ) then
+    alter table public.contacts
+      add constraint contacts_contact_group_check
+      check (contact_group in ('family', 'colleagues', 'friends'));
+  end if;
+end
+$$;
 
 create table if not exists public.sessions (
   id uuid primary key default gen_random_uuid(),

@@ -30,10 +30,19 @@ import { setActiveSessionId } from "../../src/lib/activeSession";
 import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/liveShare";
 import { createNotificationDispatchPlan, type NotifyMode } from "../../src/lib/notifyChannels";
 import {
+  CONTACT_GROUPS,
+  getContactGroupMeta,
+  getContactGroupProfiles,
+  resolveContactGroup,
+  type ContactGroupKey,
+  type ContactGroupProfilesMap
+} from "../../src/lib/contactGroups";
+import {
   computeSafetyEscalationSchedule,
   formatSafetyDelay,
   getSafetyEscalationConfig
 } from "../../src/lib/safetyEscalation";
+import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
 import { supabase } from "../../src/lib/supabase";
 import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/routing";
 
@@ -52,6 +61,7 @@ type ContactItem = {
   channel: "sms" | "whatsapp" | "call";
   phone?: string;
   email?: string | null;
+  contact_group?: ContactGroupKey | null;
 };
 
 type FavoriteAddress = {
@@ -285,6 +295,7 @@ export default function SetupScreen() {
 
   const [manualName, setManualName] = useState("");
   const [manualPhone, setManualPhone] = useState("");
+  const [manualGroup, setManualGroup] = useState<ContactGroupKey>("friends");
   const [expectedHour, setExpectedHour] = useState<string | null>(null);
   const [expectedMinute, setExpectedMinute] = useState<string | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -300,6 +311,8 @@ export default function SetupScreen() {
   >("idle");
   const [notificationDetails, setNotificationDetails] = useState("");
   const [notifyMode, setNotifyMode] = useState<NotifyMode>("auto");
+  const [useGroupProfiles, setUseGroupProfiles] = useState(true);
+  const [groupProfiles, setGroupProfiles] = useState<ContactGroupProfilesMap | null>(null);
   const [shareLiveLocation, setShareLiveLocation] = useState(false);
   const [autoDisableShareOnArrival, setAutoDisableShareOnArrival] = useState(true);
 
@@ -372,9 +385,14 @@ export default function SetupScreen() {
     (async () => {
       try {
         setLoadingFavorites(true);
-        const [addr, cont] = await Promise.all([listFavoriteAddresses(), listContacts()]);
+        const [addr, cont, profiles] = await Promise.all([
+          listFavoriteAddresses(),
+          listContacts(),
+          getContactGroupProfiles()
+        ]);
         setFavoriteAddresses(addr as FavoriteAddress[]);
         setFavoriteContacts(cont as ContactItem[]);
+        setGroupProfiles(profiles);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement.");
       } finally {
@@ -430,6 +448,17 @@ export default function SetupScreen() {
     () => favoriteContacts.filter((contact) => selectedContacts.includes(contact.id)),
     [favoriteContacts, selectedContacts]
   );
+  const selectedGroupsSummary = useMemo(() => {
+    const counts: Record<ContactGroupKey, number> = {
+      family: 0,
+      colleagues: 0,
+      friends: 0
+    };
+    for (const contact of selectedContactItems) {
+      counts[resolveContactGroup(contact.contact_group)] += 1;
+    }
+    return counts;
+  }, [selectedContactItems]);
   const getRevealStyle = (index: number) => ({
     opacity: revealValues[index],
     transform: [
@@ -471,6 +500,7 @@ export default function SetupScreen() {
     setExpectedMinute(null);
     setManualName("");
     setManualPhone("");
+    setManualGroup("friends");
     setSelectedContacts([]);
     setRouteResult(null);
     setErrorMessage("");
@@ -496,12 +526,14 @@ export default function SetupScreen() {
         const saved = await createContact({
           name: manualName.trim(),
           channel: "sms",
-          phone: manualPhone.trim()
+          phone: manualPhone.trim(),
+          contact_group: manualGroup
         });
         setFavoriteContacts((prev) => [saved as ContactItem, ...prev]);
         setSelectedContacts((prev) => [...prev, saved.id]);
         setManualName("");
         setManualPhone("");
+        setManualGroup("friends");
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur lors de l enregistrement.");
       } finally {
@@ -538,7 +570,8 @@ export default function SetupScreen() {
         const saved = await createContact({
           name: contact.name ?? number,
           channel: "sms",
-          phone: formatPhone(number)
+          phone: formatPhone(number),
+          contact_group: "friends"
         });
         setFavoriteContacts((prev) => [saved as ContactItem, ...prev]);
         setSelectedContacts((prev) => [...prev, saved.id]);
@@ -610,61 +643,117 @@ export default function SetupScreen() {
         }
         setLastSessionId(session.id);
         setLastShareToken(liveShareToken);
+        try {
+          await syncSafeBackHomeWidget({
+            status: "trip_active",
+            fromAddress: fromAddress.trim(),
+            toAddress: toAddress.trim(),
+            note: "Trajet en cours",
+            updatedAtIso: new Date().toISOString()
+          });
+        } catch {
+          // no-op: widget sync must not block session launch
+        }
         const time = formatNowTime();
         const arrivalText =
           formatTimeParts(expectedHour, expectedMinute) ||
           (routeResult ? `${routeResult.durationMinutes} min estimees` : "heure estimee inconnue");
         const messageBody = `Je demarre mon trajet a ${time} vers ${toAddress.trim()}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
         const subject = `SafeBack - Demarrage trajet ${time}`;
-        const messages: SimulatedMessage[] = selectedContactItems.map((contact, index) => ({
-          id: `${session.id}-${contact.id}-${index}`,
-          contactName: contact.name,
-          channel: notifyMode === "auto" ? contact.channel : notifyMode,
-          phone: contact.phone,
-          email: contact.email ?? null,
-          body: messageBody,
-          sentAt: time
-        }));
-        setSimulatedMessages(messages);
-
-        const dispatchPlan = createNotificationDispatchPlan({
-          mode: notifyMode,
-          contacts: selectedContactItems,
-          subject,
-          body: messageBody,
-          platform: Platform.OS === "ios" ? "ios" : "android"
+        const resolvedGroupProfiles = groupProfiles ?? (await getContactGroupProfiles());
+        const departureContacts = selectedContactItems.filter((contact) => {
+          if (!useGroupProfiles) return true;
+          const groupKey = resolveContactGroup(contact.contact_group);
+          return resolvedGroupProfiles[groupKey].sendOnDeparture;
         });
+        const delayAlertContacts = departureContacts.filter((contact) => {
+          if (!useGroupProfiles) return true;
+          const groupKey = resolveContactGroup(contact.contact_group);
+          return resolvedGroupProfiles[groupKey].receiveDelayAlerts;
+        });
+
+        const contactsByMode = departureContacts.reduce<Record<NotifyMode, ContactItem[]>>(
+          (accumulator, contact) => {
+            const groupKey = resolveContactGroup(contact.contact_group);
+            const effectiveMode = useGroupProfiles
+              ? resolvedGroupProfiles[groupKey].notifyMode
+              : notifyMode;
+            if (!accumulator[effectiveMode]) {
+              accumulator[effectiveMode] = [];
+            }
+            accumulator[effectiveMode].push(contact);
+            return accumulator;
+          },
+          {} as Record<NotifyMode, ContactItem[]>
+        );
+
+        const dispatchEntries = (Object.entries(contactsByMode) as Array<[NotifyMode, ContactItem[]]>)
+          .filter(([, contacts]) => contacts.length > 0)
+          .map(([mode, contacts]) => ({
+            mode,
+            contacts,
+            plan: createNotificationDispatchPlan({
+              mode,
+              contacts,
+              subject,
+              body: messageBody,
+              platform: Platform.OS === "ios" ? "ios" : "android"
+            })
+          }));
+
+        const dispatchIssues = dispatchEntries.flatMap((entry) => entry.plan.issues);
+        const needsInAppAlert = dispatchEntries.some((entry) => entry.plan.needsInAppAlert);
+
+        const messages: SimulatedMessage[] = departureContacts.map((contact, index) => {
+          const groupKey = resolveContactGroup(contact.contact_group);
+          const effectiveMode = useGroupProfiles
+            ? resolvedGroupProfiles[groupKey].notifyMode
+            : notifyMode;
+          return {
+            id: `${session.id}-${contact.id}-${index}`,
+            contactName: `${contact.name} (${getContactGroupMeta(groupKey).label})`,
+            channel: effectiveMode === "auto" ? contact.channel : effectiveMode,
+            phone: contact.phone,
+            email: contact.email ?? null,
+            body: messageBody,
+            sentAt: time
+          };
+        });
+        setSimulatedMessages(messages);
 
         const openedChannels: string[] = [];
         const openExternalChannel = async (url: string | null, label: string) => {
           if (!url) return;
           const canOpen = await Linking.canOpenURL(url);
           if (!canOpen) {
-            dispatchPlan.issues.push(`${label} indisponible sur cet appareil.`);
+            dispatchIssues.push(`${label} indisponible sur cet appareil.`);
             return;
           }
           await Linking.openURL(url);
           openedChannels.push(label);
         };
 
-        await openExternalChannel(dispatchPlan.smsUrl, "SMS");
-        await openExternalChannel(dispatchPlan.mailUrl, "Email");
-        await openExternalChannel(dispatchPlan.whatsappUrl, "WhatsApp");
+        for (const entry of dispatchEntries) {
+          const modeText = notifyModeLabel(entry.mode);
+          await openExternalChannel(entry.plan.smsUrl, `SMS (${modeText})`);
+          await openExternalChannel(entry.plan.mailUrl, `Email (${modeText})`);
+          await openExternalChannel(entry.plan.whatsappUrl, `WhatsApp (${modeText})`);
+        }
 
         let appNotificationsScheduled = false;
         let notificationBlocked = false;
         const notificationNotes: string[] = [];
 
         if (Constants.appOwnership === "expo") {
-          if (dispatchPlan.needsInAppAlert || safetyConfig.enabled) {
+          if (needsInAppAlert || safetyConfig.enabled) {
             notificationNotes.push(
               "Planification des alertes indisponible dans Expo Go. Utilise un build dev pour tester."
             );
           }
-          if (dispatchPlan.needsInAppAlert && messages.length === 0) {
+          if (needsInAppAlert && messages.length === 0) {
             notificationNotes.push("Aucun proche selectionne pour le canal application.");
           }
-        } else if (dispatchPlan.needsInAppAlert || safetyConfig.enabled) {
+        } else if (needsInAppAlert || safetyConfig.enabled) {
           const Notifications = await import("expo-notifications");
           const current = await Notifications.getPermissionsAsync();
           let status = current.status;
@@ -674,13 +763,11 @@ export default function SetupScreen() {
           }
 
           if (status === "granted") {
-            if (dispatchPlan.needsInAppAlert && messages.length > 0) {
+            if (needsInAppAlert && messages.length > 0) {
               await Notifications.scheduleNotificationAsync({
                 content: {
                   title: "SafeBack",
-                  body: `Alerte de depart preparee pour ${messages.length} proche(s) via ${notifyModeLabel(
-                    notifyMode
-                  )}.`
+                  body: `Alerte de depart preparee pour ${messages.length} proche(s).`
                 },
                 trigger: null
               });
@@ -707,8 +794,8 @@ export default function SetupScreen() {
                 content: {
                   title: "SafeBack - Escalade proches",
                   body:
-                    messages.length > 0
-                      ? `Aucune confirmation. Pense a prevenir tes ${messages.length} proche(s).`
+                    delayAlertContacts.length > 0
+                      ? `Aucune confirmation. Pense a prevenir tes ${delayAlertContacts.length} proche(s).`
                       : "Aucune confirmation. Ajoute des proches a prevenir pour activer l escalade."
                 },
                 trigger: {
@@ -723,7 +810,7 @@ export default function SetupScreen() {
                   safetyConfig.reminderDelayMinutes
                 )}, escalation proches a ${formatSafetyDelay(
                   safetyConfig.closeContactsDelayMinutes
-                )}.`
+                )} (${delayAlertContacts.length} proche(s) concernes).`
               );
             } else {
               notificationNotes.push("Alertes de retard desactivees dans les reglages.");
@@ -735,10 +822,10 @@ export default function SetupScreen() {
         }
 
         const hasAnyDispatch =
-          openedChannels.length > 0 || appNotificationsScheduled || dispatchPlan.needsInAppAlert;
+          openedChannels.length > 0 || appNotificationsScheduled || needsInAppAlert;
         if (notificationBlocked && openedChannels.length === 0 && !appNotificationsScheduled) {
           setNotificationStatus("blocked");
-        } else if (Constants.appOwnership === "expo" && (dispatchPlan.needsInAppAlert || safetyConfig.enabled)) {
+        } else if (Constants.appOwnership === "expo" && (needsInAppAlert || safetyConfig.enabled)) {
           setNotificationStatus("expo-go");
         } else if (hasAnyDispatch) {
           setNotificationStatus("sent");
@@ -750,8 +837,17 @@ export default function SetupScreen() {
         if (openedChannels.length > 0) {
           dispatchSummary.push(`Canaux externes ouverts: ${openedChannels.join(", ")}.`);
         }
-        if (dispatchPlan.issues.length > 0) {
-          dispatchSummary.push(dispatchPlan.issues.join(" "));
+        if (dispatchEntries.length > 0) {
+          dispatchSummary.push(
+            `Profils groupes: ${
+              useGroupProfiles ? "actifs" : "desactives"
+            } (${dispatchEntries
+              .map((entry) => `${notifyModeLabel(entry.mode)}: ${entry.contacts.length}`)
+              .join(" | ")}).`
+          );
+        }
+        if (dispatchIssues.length > 0) {
+          dispatchSummary.push(dispatchIssues.join(" "));
         }
         dispatchSummary.push(...notificationNotes);
         if (dispatchSummary.length === 0) {
@@ -1189,12 +1285,26 @@ export default function SetupScreen() {
                   onPress={() => toggleContact(contact.id)}
                 >
                   <Text className="text-xs font-semibold text-white">
-                    {contact.name} · {formatPhone(contact.phone ?? "")} x
+                    {contact.name} · {getContactGroupMeta(resolveContactGroup(contact.contact_group)).label} ·{" "}
+                    {formatPhone(contact.phone ?? "")} x
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           ) : null}
+
+          <View className="mt-3 flex-row flex-wrap gap-2">
+            {CONTACT_GROUPS.map((group) => (
+              <View
+                key={`summary-${group.key}`}
+                className="rounded-full border border-slate-200 bg-white px-3 py-2"
+              >
+                <Text className="text-xs font-semibold text-slate-700">
+                  {group.label}: {selectedGroupsSummary[group.key]}
+                </Text>
+              </View>
+            ))}
+          </View>
 
           <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
             <Text className="text-xs uppercase tracking-widest text-slate-500">
@@ -1203,6 +1313,44 @@ export default function SetupScreen() {
             <Text className="mt-2 text-sm text-slate-600">
               Choisis comment prevenir tes proches au depart.
             </Text>
+            <TouchableOpacity
+              className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.push("/contact-groups")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-800">
+                Gerer les profils de groupes
+              </Text>
+            </TouchableOpacity>
+            <View className="mt-3 flex-row gap-2">
+              <TouchableOpacity
+                className={`flex-1 rounded-2xl px-3 py-2 ${
+                  useGroupProfiles ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                }`}
+                onPress={() => setUseGroupProfiles(true)}
+              >
+                <Text
+                  className={`text-center text-xs font-semibold ${
+                    useGroupProfiles ? "text-white" : "text-slate-700"
+                  }`}
+                >
+                  Profils groupes
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`flex-1 rounded-2xl px-3 py-2 ${
+                  !useGroupProfiles ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                }`}
+                onPress={() => setUseGroupProfiles(false)}
+              >
+                <Text
+                  className={`text-center text-xs font-semibold ${
+                    !useGroupProfiles ? "text-white" : "text-slate-700"
+                  }`}
+                >
+                  Mode global
+                </Text>
+              </TouchableOpacity>
+            </View>
             <View className="mt-3 flex-row flex-wrap gap-2">
               {([
                 { key: "auto", label: "Auto" },
@@ -1219,14 +1367,28 @@ export default function SetupScreen() {
                       active ? "bg-[#111827]" : "border border-slate-200 bg-white"
                     }`}
                     onPress={() => setNotifyMode(item.key)}
+                    disabled={useGroupProfiles}
                   >
-                    <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-700"}`}>
+                    <Text
+                      className={`text-sm font-semibold ${
+                        useGroupProfiles
+                          ? "text-slate-400"
+                          : active
+                            ? "text-white"
+                            : "text-slate-700"
+                      }`}
+                    >
                       {item.label}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
+            {useGroupProfiles ? (
+              <Text className="mt-2 text-xs text-slate-500">
+                Le mode global est ignore: chaque contact utilise le profil de son groupe.
+              </Text>
+            ) : null}
           </View>
 
           <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -1248,6 +1410,25 @@ export default function SetupScreen() {
               value={manualPhone}
               onChangeText={(text) => setManualPhone(formatPhone(text))}
             />
+            <Text className="mt-3 text-xs uppercase tracking-widest text-slate-500">Groupe</Text>
+            <View className="mt-2 flex-row gap-2">
+              {CONTACT_GROUPS.map((group) => {
+                const active = manualGroup === group.key;
+                return (
+                  <TouchableOpacity
+                    key={`manual-group-${group.key}`}
+                    className={`flex-1 rounded-2xl px-3 py-2 ${
+                      active ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                    }`}
+                    onPress={() => setManualGroup(group.key)}
+                  >
+                    <Text className={`text-center text-xs font-semibold ${active ? "text-white" : "text-slate-700"}`}>
+                      {group.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
             <View className="mt-3 flex-row gap-2">
               <TouchableOpacity
                 className={`flex-1 rounded-2xl px-4 py-3 ${
@@ -1302,7 +1483,8 @@ export default function SetupScreen() {
                           active ? "text-slate-200" : "text-slate-500"
                         }`}
                       >
-                        {formatPhone(contact.phone ?? "")}
+                        {formatPhone(contact.phone ?? "")} ·{" "}
+                        {getContactGroupMeta(resolveContactGroup(contact.contact_group)).label}
                       </Text>
                     </View>
                     <Text className={active ? "text-white" : "text-slate-500"}>
@@ -1342,7 +1524,7 @@ export default function SetupScreen() {
               Simulation d envoi (DEV / TEST)
             </Text>
             <Text className="mt-2 text-sm text-slate-600">
-              Envoi configure: {notifyModeLabel(notifyMode)}.
+              Envoi configure: {useGroupProfiles ? "Profils de groupes" : notifyModeLabel(notifyMode)}.
             </Text>
             <View className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
               {simulatedMessages.map((item) => (

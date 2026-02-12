@@ -336,6 +336,23 @@ describe("db helpers", () => {
     ).rejects.toThrow("insert contact failed");
   });
 
+  it("createContact forwards contact_group when provided", async () => {
+    setResult("contacts", "single", {
+      data: { id: "c-group", name: "Nina", channel: "sms", contact_group: "family" },
+      error: null
+    });
+
+    await createContact({
+      name: "Nina",
+      channel: "sms",
+      phone: "0600000000",
+      contact_group: "family"
+    });
+
+    const insertCall = state.calls.find((call) => call.table === "contacts" && call.action === "insert");
+    expect(insertCall?.payload.contact_group).toBe("family");
+  });
+
   it("deleteContact and deleteFavoriteAddress apply eq filter", async () => {
     setResult("contacts", "eq", { data: null, error: null });
     setResult("favorite_addresses", "eq", { data: null, error: null });

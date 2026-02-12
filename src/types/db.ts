@@ -11,6 +11,7 @@ export type Contact = {
   channel: "sms" | "whatsapp" | "call";
   phone?: string;
   email?: string | null;
+  contact_group?: "family" | "colleagues" | "friends" | null;
   created_at?: string;
 };
 

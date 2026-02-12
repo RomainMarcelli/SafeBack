@@ -106,6 +106,7 @@ export async function createContact(payload: {
   channel: Contact["channel"];
   phone?: string;
   email?: string | null;
+  contact_group?: Contact["contact_group"];
 }): Promise<Contact> {
   const { data, error } = await supabase
     .from("contacts")

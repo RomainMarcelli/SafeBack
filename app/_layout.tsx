@@ -134,7 +134,11 @@ export default function RootLayout() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const [unreadCount, setUnreadCount] = useState(0);
-  const hideTabs = pathname === "/auth" || pathname === "/signup" || pathname === "/friend-view";
+  const hideTabs =
+    pathname === "/auth" ||
+    pathname === "/signup" ||
+    pathname === "/friend-view" ||
+    pathname === "/quick-arrival";
 
   useEffect(() => {
     let stopDetector: (() => void) | null = null;

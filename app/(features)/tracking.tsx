@@ -14,6 +14,7 @@ import { startBackgroundTracking, stopBackgroundTracking } from "../../src/servi
 import { getPremium } from "../../src/lib/premium";
 import { buildSmsUrl, buildSosMessage } from "../../src/lib/sos";
 import { clearActiveSessionId, setActiveSessionId } from "../../src/lib/activeSession";
+import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
 import { sendArrivalSignalToGuardians } from "../../src/lib/messagingDb";
 import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/predefinedMessage";
 
@@ -635,6 +636,15 @@ export default function TrackingScreen() {
                 }
 
                 await clearActiveSessionId();
+                try {
+                  await syncSafeBackHomeWidget({
+                    status: "arrived",
+                    note: "Confirmation envoyee",
+                    updatedAtIso: new Date().toISOString()
+                  });
+                } catch {
+                  // no-op: widget sync must not block arrival confirmation
+                }
                 setArrivalConfirmed(true);
                 setArrivalMessage(arrivalNotice);
               } catch (error: any) {

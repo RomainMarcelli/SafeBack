@@ -282,7 +282,12 @@ export default function AccountScreen() {
                 <Text className="mt-1 text-sm font-semibold text-slate-800">Notifications</Text>
               </TouchableOpacity>
             </Link>
-            <View className="flex-1" />
+            <Link href="/contact-groups" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="people-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Groupes</Text>
+              </TouchableOpacity>
+            </Link>
           </View>
 
           <View className="mt-2 flex-row gap-2">

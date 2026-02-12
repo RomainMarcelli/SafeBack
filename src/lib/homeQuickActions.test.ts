@@ -1,0 +1,18 @@
+import { describe, expect, it } from "vitest";
+import { formatQuickArrivalMessage } from "./homeQuickActions";
+
+describe("homeQuickActions", () => {
+  it("formats zero guardians", () => {
+    expect(formatQuickArrivalMessage(0)).toBe(
+      "Confirmation envoyee. Aucun garant actif a notifier."
+    );
+  });
+
+  it("formats singular guardian", () => {
+    expect(formatQuickArrivalMessage(1)).toBe("Confirmation envoyee a 1 garant.");
+  });
+
+  it("formats plural guardians", () => {
+    expect(formatQuickArrivalMessage(3)).toBe("Confirmation envoyee a 3 garants.");
+  });
+});

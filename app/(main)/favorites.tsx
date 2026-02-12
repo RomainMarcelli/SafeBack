@@ -12,6 +12,7 @@ import {
   listContacts,
   listFavoriteAddresses
 } from "../../src/lib/db";
+import { CONTACT_GROUPS, resolveContactGroup, type ContactGroupKey } from "../../src/lib/contactGroups";
 import { supabase } from "../../src/lib/supabase";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
@@ -139,6 +140,7 @@ export default function FavoritesScreen() {
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [contactChannel, setContactChannel] = useState<"sms" | "whatsapp" | "call">("sms");
+  const [contactGroup, setContactGroup] = useState<ContactGroupKey>("friends");
   const [contactQuery, setContactQuery] = useState("");
   const [phoneContacts, setPhoneContacts] = useState<Contacts.Contact[]>([]);
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
@@ -208,13 +210,15 @@ export default function FavoritesScreen() {
         name: contactName.trim(),
         phone: contactPhone.trim() ? formatPhone(contactPhone.trim()) : undefined,
         email: contactEmail.trim() || null,
-        channel: contactChannel
+        channel: contactChannel,
+        contact_group: contactGroup
       });
       setContacts((prev) => [saved, ...prev]);
       setContactName("");
       setContactPhone("");
       setContactEmail("");
       setContactChannel("sms");
+      setContactGroup("friends");
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
     } finally {
@@ -246,6 +250,7 @@ export default function FavoritesScreen() {
     setContactName(contact.name ?? "");
     setContactPhone(formatPhone(number));
     setContactChannel("sms");
+    setContactGroup("friends");
     setShowPhoneContacts(false);
   };
 
@@ -266,7 +271,14 @@ export default function FavoritesScreen() {
       const name = String(item.name ?? "").toLowerCase();
       const phone = String(item.phone ?? "").toLowerCase();
       const email = String(item.email ?? "").toLowerCase();
-      return name.includes(query) || phone.includes(query) || email.includes(query);
+      const group = resolveContactGroup(item.contact_group);
+      const groupLabel = CONTACT_GROUPS.find((entry) => entry.key === group)?.label.toLowerCase() ?? "";
+      return (
+        name.includes(query) ||
+        phone.includes(query) ||
+        email.includes(query) ||
+        groupLabel.includes(query)
+      );
     });
   }, [contacts, contactQuery]);
 
@@ -427,6 +439,14 @@ export default function FavoritesScreen() {
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Contacts favoris</Text>
+          <TouchableOpacity
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            onPress={() => router.push("/contact-groups")}
+          >
+            <Text className="text-center text-sm font-semibold text-slate-800">
+              Gerer les groupes (Famille / Collegues / Amis)
+            </Text>
+          </TouchableOpacity>
           <TextInput
             className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
             placeholder="Rechercher un contact"
@@ -480,6 +500,25 @@ export default function FavoritesScreen() {
               );
             })}
           </View>
+          <Text className="mt-3 text-xs uppercase tracking-widest text-slate-500">Groupe</Text>
+          <View className="mt-2 flex-row gap-2">
+            {CONTACT_GROUPS.map((group) => {
+              const active = contactGroup === group.key;
+              return (
+                <TouchableOpacity
+                  key={`group-${group.key}`}
+                  className={`flex-1 rounded-2xl px-3 py-2 ${
+                    active ? "bg-[#111827]" : "border border-slate-200 bg-white"
+                  }`}
+                  onPress={() => setContactGroup(group.key)}
+                >
+                  <Text className={`text-center text-xs font-semibold ${active ? "text-white" : "text-slate-700"}`}>
+                    {group.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <TouchableOpacity
             className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
             onPress={importFromPhone}
@@ -528,6 +567,13 @@ export default function FavoritesScreen() {
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1 pr-3">
                       <Text className="text-sm font-semibold text-slate-800">{item.name}</Text>
+                      <Text className="mt-1 text-xs font-semibold text-slate-600">
+                        {
+                          CONTACT_GROUPS.find(
+                            (entry) => entry.key === resolveContactGroup(item.contact_group)
+                          )?.label
+                        }
+                      </Text>
                       <Text className="text-xs text-slate-500">
                         {formatPhone(item.phone ?? "")}
                       </Text>

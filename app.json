@@ -29,7 +29,25 @@
     "plugins": [
       "expo-router",
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "SafeBackHomeWidget",
+              "label": "SafeBack rapide",
+              "description": "Lancer un trajet et envoyer \"bien rentre\" en 1 clic",
+              "minWidth": "250dp",
+              "minHeight": "120dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "previewImage": "./assets/adaptive-icon.png"
+            }
+          ]
+        }
+      ]
     ]
   }
 }
