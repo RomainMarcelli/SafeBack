@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Redirect, useRouter } from "expo-router";
-import { Text, TouchableOpacity, View, ScrollView } from "react-native";
+import { useRouter } from "expo-router";
+import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { deleteSession, listSessions } from "../src/lib/db";
+import { deleteAllSessions, deleteSession, listSessions } from "../src/lib/db";
 import { supabase } from "../src/lib/supabase";
 
 type SessionItem = {
@@ -30,6 +30,8 @@ export default function TripsScreen() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [deletingAll, setDeletingAll] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -37,6 +39,12 @@ export default function TripsScreen() {
       setChecking(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!checking && !userId) {
+      router.replace("/auth");
+    }
+  }, [checking, userId, router]);
 
   useEffect(() => {
     if (!userId) return;
@@ -54,42 +62,63 @@ export default function TripsScreen() {
   }, [userId]);
 
   if (!checking && !userId) {
-    return <Redirect href="/auth" />;
+    return null;
   }
 
+  const filteredSessions = useMemo(() => {
+    const value = query.trim().toLowerCase();
+    if (!value) return sessions;
+    return sessions.filter((session) => {
+      const from = String(session.from_address ?? "").toLowerCase();
+      const to = String(session.to_address ?? "").toLowerCase();
+      return from.includes(value) || to.includes(value);
+    });
+  }, [sessions, query]);
+
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
       <ScrollView
         className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 48 }}
       >
-        <View className="mt-4 flex-row items-center">
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
-            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Retour
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Mes trajets</Text>
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              Historique
+            </Text>
+          </View>
         </View>
-        <Text className="mt-2 text-sm text-slate-600">
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Mes trajets</Text>
+        <Text className="mt-2 text-base text-[#475569]">
           Supprime les anciens trajets pour garder ta base propre.
         </Text>
 
         {loading ? (
           <Text className="mt-6 text-sm text-slate-500">Chargement...</Text>
         ) : sessions.length === 0 ? (
-          <View className="mt-12 items-center justify-center rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <View className="mt-10 items-center justify-center rounded-3xl border border-[#E7E0D7] bg-white/90 p-6 shadow-sm">
             <Text className="text-base font-semibold text-slate-800">
-              0 trajet realise
+              Aucun trajet pour l instant
             </Text>
             <Text className="mt-2 text-center text-sm text-slate-600">
-              Lance un trajet pour le voir apparaitre ici.
+              Tu veux en lancer un nouveau ?
             </Text>
             <View className="mt-5 w-full">
               <TouchableOpacity
-                className="rounded-xl bg-black px-4 py-3"
+                className="rounded-2xl bg-[#111827] px-4 py-3"
                 onPress={() => router.replace("/setup")}
               >
                 <Text className="text-center text-sm font-semibold text-white">
@@ -97,7 +126,7 @@ export default function TripsScreen() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                className="mt-3 rounded-xl border border-slate-200 px-4 py-3"
+                className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 onPress={() => router.replace("/")}
               >
                 <Text className="text-center text-sm font-semibold text-slate-700">
@@ -108,20 +137,93 @@ export default function TripsScreen() {
           </View>
         ) : (
           <View className="mt-6">
-            {sessions.map((session) => (
+            <TouchableOpacity
+              className={`mb-4 rounded-2xl px-4 py-3 ${
+                deletingAll ? "bg-slate-200" : "bg-rose-600"
+              }`}
+              onPress={() => {
+                if (deletingAll) return;
+                Alert.alert(
+                  "Tout supprimer ?",
+                  "Cette action est definitive.",
+                  [
+                    { text: "Annuler", style: "cancel" },
+                    {
+                      text: "Supprimer",
+                      style: "destructive",
+                      onPress: async () => {
+                        try {
+                          setDeletingAll(true);
+                          await deleteAllSessions();
+                          setSessions([]);
+                          setQuery("");
+                        } catch (error: any) {
+                          setErrorMessage(error?.message ?? "Erreur suppression.");
+                        } finally {
+                          setDeletingAll(false);
+                        }
+                      }
+                    }
+                  ],
+                  { cancelable: true }
+                );
+              }}
+              disabled={deletingAll}
+            >
+              <Text className="text-center text-sm font-semibold text-white">
+                Tout supprimer
+              </Text>
+            </TouchableOpacity>
+            <TextInput
+              className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+              placeholder="Rechercher un trajet"
+              placeholderTextColor="#94a3b8"
+              value={query}
+              onChangeText={setQuery}
+            />
+            {filteredSessions.length === 0 ? (
+              <Text className="text-sm text-slate-600">Aucun trajet ne correspond.</Text>
+            ) : null}
+            {filteredSessions.map((session) => (
               <View
                 key={session.id}
-                className="mt-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+                className="mt-3 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm"
               >
-                <Text className="text-xs uppercase text-slate-500">
+                <Text className="text-xs uppercase tracking-widest text-slate-500">
                   {formatDate(session.created_at)}
                 </Text>
-                <Text className="mt-2 text-sm font-semibold text-slate-800">Depart</Text>
+                <Text className="mt-3 text-sm font-semibold text-slate-800">Depart</Text>
                 <Text className="text-sm text-slate-600">{session.from_address}</Text>
                 <Text className="mt-3 text-sm font-semibold text-slate-800">Arrivee</Text>
                 <Text className="text-sm text-slate-600">{session.to_address}</Text>
+                <View className="mt-4 flex-row gap-2">
+                  <TouchableOpacity
+                    className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                    onPress={() =>
+                      router.push({
+                        pathname: "/setup",
+                        params: { from: session.from_address, to: session.to_address }
+                      })
+                    }
+                  >
+                    <Text className="text-center text-sm font-semibold text-white">Relancer</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                    onPress={() =>
+                      router.push({
+                        pathname: "/tracking",
+                        params: { sessionId: session.id, mode: "walking" }
+                      })
+                    }
+                  >
+                    <Text className="text-center text-sm font-semibold text-slate-700">
+                      Suivre
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 <TouchableOpacity
-                  className="mt-4 rounded-xl border border-slate-200 px-4 py-3"
+                  className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                   onPress={async () => {
                     try {
                       await deleteSession(session.id);

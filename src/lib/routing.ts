@@ -143,21 +143,37 @@ export async function fetchRoute(from: string, to: string, mode: RouteMode): Pro
   if (mode === "walking") {
     const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (key) {
-      return fetchGoogleRoute(from, to, key, "walking");
+      const result = await fetchGoogleRoute(from, to, key, "walking");
+      return result;
     }
     const primary = await fetchOsrmRoute(from, to, "foot");
-    if (primary) return primary;
+    if (primary) {
+      const minForDistance = Math.round((primary.distanceKm / 5) * 60);
+      if (primary.distanceKm > 0 && primary.durationMinutes <= primary.distanceKm * 10) {
+        const adjusted = {
+          ...primary,
+          durationMinutes: Math.max(primary.durationMinutes, minForDistance)
+        };
+        return adjusted;
+      }
+      return primary;
+    }
     const fallback = await fetchOsrmRoute(from, to, "driving");
-    return fallback
-      ? { ...fallback, durationMinutes: Math.round(fallback.durationMinutes * 1.6) }
-      : null;
+    if (!fallback) return null;
+    const adjusted = {
+      ...fallback,
+      durationMinutes: Math.round(fallback.durationMinutes * 1.6)
+    };
+    return adjusted;
   }
   if (mode === "driving") {
     const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (key) {
-      return fetchGoogleRoute(from, to, key, "driving");
+      const result = await fetchGoogleRoute(from, to, key, "driving");
+      return result;
     }
-    return fetchOsrmRoute(from, to, "driving");
+    const result = await fetchOsrmRoute(from, to, "driving");
+    return result;
   }
 
   const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;

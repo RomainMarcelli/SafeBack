@@ -152,6 +152,11 @@ export async function listSessions(): Promise<Session[]> {
   return data as Session[];
 }
 
+export async function deleteAllSessions() {
+  const { error } = await supabase.from("sessions").delete().neq("id", "");
+  if (error) throw error;
+}
+
 export async function deleteSession(id: string) {
   const { error } = await supabase.from("sessions").delete().eq("id", id);
   if (error) throw error;

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useRouter } from "expo-router";
-import { Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { upsertProfile } from "../src/lib/db";
 import { supabase } from "../src/lib/supabase";
@@ -47,7 +47,10 @@ export default function SignupScreen() {
     return <Redirect href="/" />;
   }
 
+  const canSubmit = email.trim().length > 0 && password.trim().length > 0;
+
   const submit = async () => {
+    if (!canSubmit) return;
     try {
       setSaving(true);
       setErrorMessage("");
@@ -76,43 +79,57 @@ export default function SignupScreen() {
     }
   };
 
-  const canSubmit = email.trim().length > 0 && password.trim().length > 0;
-
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
-      <View className="flex-1 px-6 pt-16">
-        <View className="flex-row items-center">
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-28 -left-24 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
+      <ScrollView
+        className="flex-1 px-6"
+        contentContainerStyle={{ paddingBottom: 48 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
-            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Retour
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Creer un compte</Text>
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              SafeBack
+            </Text>
+          </View>
         </View>
-        <Text className="mt-2 text-sm text-slate-600">
-          Renseigne les informations principales pour commencer.
+
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Creer un compte</Text>
+        <Text className="mt-2 text-base text-[#475569]">
+          Complete ton profil pour demarrer tes trajets en securite.
         </Text>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs font-semibold uppercase text-slate-500">Email</Text>
+        <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Email</Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="prenom@email.com"
+            placeholderTextColor="#94a3b8"
             autoCapitalize="none"
             keyboardType="email-address"
             value={email}
             onChangeText={setEmail}
           />
 
-          <Text className="mt-4 text-xs font-semibold uppercase text-slate-500">
-            Mot de passe
-          </Text>
-          <View className="mt-2 flex-row items-center rounded-xl border border-slate-200 bg-white px-3">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">Mot de passe</Text>
+          <View className="mt-3 flex-row items-center rounded-2xl border border-slate-200 bg-[#F8FAFC] px-3">
             <TextInput
-              className="flex-1 py-3 text-base leading-6"
+              className="flex-1 py-3 text-base text-slate-900"
               placeholder="********"
+              placeholderTextColor="#94a3b8"
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
@@ -129,43 +146,47 @@ export default function SignupScreen() {
             </TouchableOpacity>
           </View>
 
-          <Text className="mt-4 text-xs font-semibold uppercase text-slate-500">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
             Username (facultatif)
           </Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Pseudo"
+            placeholderTextColor="#94a3b8"
             autoCapitalize="none"
             value={username}
             onChangeText={setUsername}
           />
 
-          <Text className="mt-4 text-xs font-semibold uppercase text-slate-500">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
             Prenom (facultatif)
           </Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Prenom"
+            placeholderTextColor="#94a3b8"
             value={firstName}
             onChangeText={setFirstName}
           />
 
-          <Text className="mt-4 text-xs font-semibold uppercase text-slate-500">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
             Nom (facultatif)
           </Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Nom"
+            placeholderTextColor="#94a3b8"
             value={lastName}
             onChangeText={setLastName}
           />
 
-          <Text className="mt-4 text-xs font-semibold uppercase text-slate-500">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
             Telephone (facultatif)
           </Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="07 00 00 00 00"
+            placeholderTextColor="#94a3b8"
             keyboardType="phone-pad"
             value={phone}
             onChangeText={(text) => setPhone(formatPhone(text))}
@@ -176,8 +197,8 @@ export default function SignupScreen() {
           ) : null}
 
           <TouchableOpacity
-            className={`mt-5 rounded-xl px-4 py-3 ${
-              canSubmit && !saving ? "bg-black" : "bg-slate-300"
+            className={`mt-5 rounded-2xl px-4 py-4 ${
+              canSubmit && !saving ? "bg-[#111827]" : "bg-slate-300"
             }`}
             onPress={submit}
             disabled={!canSubmit || saving}
@@ -187,7 +208,8 @@ export default function SignupScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
+

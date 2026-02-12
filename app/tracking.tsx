@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { Linking, Platform, Share, Text, TouchableOpacity, View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Linking, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
@@ -18,6 +18,14 @@ function formatTime(value?: string | null) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function formatDurationLabel(minutesTotal: number) {
+  if (!Number.isFinite(minutesTotal)) return "";
+  if (minutesTotal < 60) return `${minutesTotal} min`;
+  const hours = Math.floor(minutesTotal / 60);
+  const minutes = minutesTotal % 60;
+  return `${hours}h${String(minutes).padStart(2, "0")}`;
 }
 
 type SessionData = {
@@ -83,12 +91,29 @@ export default function TrackingScreen() {
     return buildFriendViewLink({ sessionId: session.id, shareToken: activeShareToken });
   }, [session?.id, activeShareToken]);
 
+  const openInMaps = async () => {
+    if (!session) return;
+    const origin = encodeURIComponent(session.from_address);
+    const destination = encodeURIComponent(session.to_address);
+    const travelmode =
+      routeMode === "walking" ? "walking" : routeMode === "driving" ? "driving" : "transit";
+    await Linking.openURL(
+      `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=${travelmode}`
+    );
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
       setChecking(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!checking && !userId) {
+      router.replace("/auth");
+    }
+  }, [checking, userId, router]);
 
   useEffect(() => {
     (async () => {
@@ -184,7 +209,7 @@ export default function TrackingScreen() {
   ]);
 
   if (!checking && !userId) {
-    return <Redirect href="/auth" />;
+    return null;
   }
 
   const region = routeResult?.coords?.[0]
@@ -204,103 +229,143 @@ export default function TrackingScreen() {
     : undefined;
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
-      <View className="flex-1 px-6 pt-16">
-        <View className="flex-row items-center">
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
+      <ScrollView
+        className="flex-1 px-6"
+        contentContainerStyle={{ paddingBottom: 48 }}
+      >
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
-            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Retour
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Suivi du trajet</Text>
+          <View className="flex-row items-center gap-2">
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white/90 px-3 py-2"
+              onPress={openInMaps}
+            >
+              <Text className="text-[10px] font-semibold uppercase tracking-[2px] text-slate-700">
+                Maps
+              </Text>
+            </TouchableOpacity>
+            <View className="rounded-full bg-[#111827] px-3 py-1">
+              <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+                Suivi
+              </Text>
+            </View>
+          </View>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Temps estime</Text>
-          <Text className="mt-2 text-base font-semibold text-slate-800">
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">
+          Suivi du trajet
+        </Text>
+        <Text className="mt-2 text-base text-[#475569]">
+          Les infos clefs du trajet, en temps reel.
+        </Text>
+
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Temps estime</Text>
+          <Text className="mt-3 text-2xl font-extrabold text-[#0F172A]">
             {routeLoading
-              ? "Calcul en cours..."
+              ? "Calcul..."
               : routeResult
-              ? `${routeResult.durationMinutes} min · ${routeResult.distanceKm} km`
+              ? formatDurationLabel(routeResult.durationMinutes)
               : routeMode === "transit" && !hasGoogleKey
-              ? "Transit: cle API requise"
-              : "Non disponible"}
+              ? "Transit"
+              : "Non dispo"}
           </Text>
-          <Text className="mt-3 text-xs uppercase text-slate-500">Heure d arrivee</Text>
+          <Text className="mt-1 text-sm text-slate-600">
+            {routeResult ? `${routeResult.distanceKm} km` : "Donnees indisponibles"}
+          </Text>
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
+            Heure d arrivee
+          </Text>
           <Text className="mt-2 text-base font-semibold text-slate-800">
             {formatTime(session?.expected_arrival_time) || "Non renseignee"}
           </Text>
         </View>
 
-        <View className="mt-6 h-72 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          {!premiumChecked ? (
-            <View className="flex-1 items-center justify-center">
-              <Text className="text-sm text-slate-500">Chargement...</Text>
-            </View>
-          ) : !premium ? (
-            <TouchableOpacity
-              className="flex-1 items-center justify-center"
-              onPress={() => router.push("/premium")}
-            >
-              <Text className="text-sm font-semibold text-slate-700">🔒 Carte Premium</Text>
-              <Text className="mt-2 text-xs text-slate-500">
-                Debloque la carte temps reel et le trajet.
-              </Text>
-            </TouchableOpacity>
-          ) : region ? (
-            <MapView
-              style={{ flex: 1 }}
-              initialRegion={region}
-              showsUserLocation
-              provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-              customMapStyle={Platform.OS === "android" ? darkMapStyle : undefined}
-              onPress={() => {
-                if (!session) return;
-                const encodedFrom = encodeURIComponent(session.from_address);
-                const encodedTo = encodeURIComponent(session.to_address);
-                const url =
-                  Platform.OS === "ios"
-                    ? `http://maps.apple.com/?saddr=${encodedFrom}&daddr=${encodedTo}`
-                    : `https://www.google.com/maps/dir/?api=1&origin=${encodedFrom}&destination=${encodedTo}`;
-                Linking.openURL(url);
-              }}
-            >
-              {routeResult?.coords?.length ? (
-                <Polyline coordinates={routeResult.coords} strokeWidth={4} strokeColor="#111" />
-              ) : null}
-              {routeResult?.coords?.[0] ? (
-                <Marker coordinate={routeResult.coords[0]} title="Depart" />
-              ) : null}
-              {routeResult?.coords?.length ? (
-                <Marker coordinate={routeResult.coords[routeResult.coords.length - 1]} title="Arrivee" />
-              ) : null}
-            </MapView>
-          ) : (
-            <View className="flex-1 items-center justify-center">
-              <Text className="text-sm text-slate-500">Chargement de la carte...</Text>
-            </View>
-          )}
+        <View className="mt-6 overflow-hidden rounded-3xl border border-[#E7E0D7] bg-white/90 shadow-sm">
+          <View className="px-5 pt-5">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Carte</Text>
+            <Text className="mt-2 text-lg font-bold text-[#0F172A]">
+              Suivi en direct
+            </Text>
+          </View>
+          <View className="mt-4 h-72 overflow-hidden">
+            {!premiumChecked ? (
+              <View className="flex-1 items-center justify-center">
+                <Text className="text-sm text-slate-500">Chargement...</Text>
+              </View>
+            ) : !premium ? (
+              <TouchableOpacity
+                className="flex-1 items-center justify-center"
+                onPress={() => router.push("/premium")}
+              >
+                <Text className="text-sm font-semibold text-slate-700">🔒 Carte Premium</Text>
+                <Text className="mt-2 text-xs text-slate-500">
+                  Debloque la carte temps reel et le trajet.
+                </Text>
+              </TouchableOpacity>
+            ) : region ? (
+              <MapView
+                style={{ flex: 1 }}
+                initialRegion={region}
+                showsUserLocation
+                provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+                customMapStyle={Platform.OS === "android" ? darkMapStyle : undefined}
+                onPress={() => {
+                  if (!session) return;
+                  const encodedFrom = encodeURIComponent(session.from_address);
+                  const encodedTo = encodeURIComponent(session.to_address);
+                  const url =
+                    Platform.OS === "ios"
+                      ? `http://maps.apple.com/?saddr=${encodedFrom}&daddr=${encodedTo}`
+                      : `https://www.google.com/maps/dir/?api=1&origin=${encodedFrom}&destination=${encodedTo}`;
+                  Linking.openURL(url);
+                }}
+              >
+                {routeResult?.coords?.length ? (
+                  <Polyline coordinates={routeResult.coords} strokeWidth={4} strokeColor="#111" />
+                ) : null}
+                {routeResult?.coords?.[0] ? (
+                  <Marker coordinate={routeResult.coords[0]} title="Depart" />
+                ) : null}
+                {routeResult?.coords?.length ? (
+                  <Marker
+                    coordinate={routeResult.coords[routeResult.coords.length - 1]}
+                    title="Arrivee"
+                  />
+                ) : null}
+              </MapView>
+            ) : (
+              <View className="flex-1 items-center justify-center">
+                <Text className="text-sm text-slate-500">Chargement de la carte...</Text>
+              </View>
+            )}
+          </View>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Position actuelle</Text>
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Position actuelle</Text>
           <Text className="mt-2 text-base font-semibold text-slate-800">
             {coords ? `${coords.lat.toFixed(5)}, ${coords.lon.toFixed(5)}` : "Recherche..."}
           </Text>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Suivi en arriere-plan</Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            Partage temps reel: {liveSharingRequested ? "Oui" : "Non"}.
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">
+            Suivi en arriere-plan
           </Text>
-          {liveSharingRequested ? (
-            <Text className="mt-1 text-xs text-slate-500">
-              Arret auto apres confirmation d arrivee: {autoDisableOnArrival ? "Oui" : "Non"}.
-            </Text>
-          ) : null}
           {bgError ? (
             <Text className="mt-2 text-sm text-amber-600">{bgError}</Text>
           ) : (
@@ -316,9 +381,9 @@ export default function TrackingScreen() {
                 <TouchableOpacity
                   className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2"
                   onPress={async () => {
-                    await Share.share({
-                      message: `Suivi de trajet SafeBack: ${friendViewLink}`
-                    });
+                    // await Share.share({
+                    //   message: `Suivi de trajet SafeBack: ${friendViewLink}`
+                    // });
                   }}
                 >
                   <Text className="text-center text-xs font-semibold text-slate-700">Partager</Text>
@@ -344,7 +409,9 @@ export default function TrackingScreen() {
           ) : null}
           <View className="mt-4 flex-row gap-3">
             <TouchableOpacity
-              className={`flex-1 rounded-2xl px-4 py-3 ${backgroundOn ? "bg-slate-200" : "bg-black"}`}
+              className={`flex-1 rounded-2xl px-4 py-3 ${
+                backgroundOn ? "bg-slate-200" : "bg-[#111827]"
+              }`}
               onPress={async () => {
                 if (!session?.id) return;
                 try {
@@ -364,12 +431,16 @@ export default function TrackingScreen() {
               }}
               disabled={backgroundOn}
             >
-              <Text className={`text-center text-sm font-semibold ${backgroundOn ? "text-slate-600" : "text-white"}`}>
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  backgroundOn ? "text-slate-600" : "text-white"
+                }`}
+              >
                 Demarrer
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              className="flex-1 rounded-2xl border border-slate-200 px-4 py-3"
+              className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
               onPress={async () => {
                 await stopBackgroundTracking();
                 if (session?.id && liveSharingRequested) {
@@ -379,7 +450,9 @@ export default function TrackingScreen() {
                 setArrivalMessage("Partage de position desactive manuellement.");
               }}
             >
-              <Text className="text-center text-sm font-semibold text-slate-700">Arreter</Text>
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Arreter
+              </Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity
@@ -431,7 +504,7 @@ export default function TrackingScreen() {
             <Text className="mt-2 text-xs text-slate-500">{arrivalMessage}</Text>
           ) : null}
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
