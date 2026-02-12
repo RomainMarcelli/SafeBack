@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Redirect, useRouter } from "expo-router";
-import { Text, TextInput, TouchableOpacity, View, ScrollView } from "react-native";
+import { useRouter } from "expo-router";
+import { Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import {
@@ -89,10 +89,11 @@ function AddressInput(props: {
 
   return (
     <View className="mt-3">
-      <Text className="text-xs font-semibold text-slate-500">{label}</Text>
+      <Text className="text-xs uppercase tracking-widest text-slate-500">{label}</Text>
       <TextInput
-        className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+        className="mt-2 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
         placeholder="Commence a taper une adresse"
+        placeholderTextColor="#94a3b8"
         value={value}
         onChangeText={(text) => {
           onChange(text);
@@ -105,7 +106,7 @@ function AddressInput(props: {
         <Text className="mt-2 text-xs text-slate-500">Recherche...</Text>
       ) : null}
       {open && suggestions.length > 0 ? (
-        <View className="mt-2 rounded-xl border border-slate-200 bg-white">
+        <View className="mt-2 rounded-2xl border border-slate-200 bg-white shadow-sm">
           {suggestions.map((item) => (
             <TouchableOpacity
               key={item.id}
@@ -133,8 +134,10 @@ export default function FavoritesScreen() {
   const [contacts, setContacts] = useState<any[]>([]);
   const [addrLabel, setAddrLabel] = useState("");
   const [addrValue, setAddrValue] = useState("");
+  const [addrQuery, setAddrQuery] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [contactQuery, setContactQuery] = useState("");
   const [phoneContacts, setPhoneContacts] = useState<Contacts.Contact[]>([]);
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -152,6 +155,12 @@ export default function FavoritesScreen() {
   }, []);
 
   useEffect(() => {
+    if (!checking && !userId) {
+      router.replace("/auth");
+    }
+  }, [checking, userId, router]);
+
+  useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
@@ -165,7 +174,7 @@ export default function FavoritesScreen() {
   }, [userId]);
 
   if (!checking && !userId) {
-    return <Redirect href="/auth" />;
+    return null;
   }
 
   const addAddress = async () => {
@@ -233,32 +242,83 @@ export default function FavoritesScreen() {
     setShowPhoneContacts(false);
   };
 
+  const filteredAddresses = useMemo(() => {
+    const query = addrQuery.trim().toLowerCase();
+    if (!query) return addresses;
+    return addresses.filter((item) => {
+      const label = String(item.label ?? "").toLowerCase();
+      const address = String(item.address ?? "").toLowerCase();
+      return label.includes(query) || address.includes(query);
+    });
+  }, [addresses, addrQuery]);
+
+  const filteredContacts = useMemo(() => {
+    const query = contactQuery.trim().toLowerCase();
+    if (!query) return contacts;
+    return contacts.filter((item) => {
+      const name = String(item.name ?? "").toLowerCase();
+      const phone = String(item.phone ?? "").toLowerCase();
+      return name.includes(query) || phone.includes(query);
+    });
+  }, [contacts, contactQuery]);
+
+  const openMaps = async (address: string) => {
+    if (!address.trim()) return;
+    const query = encodeURIComponent(address);
+    await Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
+  };
+
+  const openPhone = async (phone: string, action: "tel" | "sms") => {
+    if (!phone.trim()) return;
+    const clean = phone.replace(/\s/g, "");
+    await Linking.openURL(`${action}:${clean}`);
+  };
+
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
       <ScrollView
         className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: 40 }}
-        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 48 }}
+        keyboardShouldPersistTaps={true}
       >
-        <View className="mt-4 flex-row items-center">
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.replace("/")}
           >
-            <Text className="text-sm font-semibold text-slate-700">Accueil</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Accueil
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Favoris</Text>
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              Favoris
+            </Text>
+          </View>
         </View>
-        <Text className="mt-2 text-sm text-slate-600">
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Favoris</Text>
+        <Text className="mt-2 text-base text-[#475569]">
           Ajoute ici les lieux et contacts que tu utilises souvent.
         </Text>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-sm font-semibold text-slate-800">Lieux favoris</Text>
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Lieux favoris</Text>
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+            placeholder="Rechercher un lieu"
+            placeholderTextColor="#94a3b8"
+            value={addrQuery}
+            onChangeText={setAddrQuery}
+          />
+          <TextInput
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Nom (maison, bureau)"
+            placeholderTextColor="#94a3b8"
             value={addrLabel}
             onChangeText={setAddrLabel}
           />
@@ -269,8 +329,8 @@ export default function FavoritesScreen() {
             onSelect={setAddrValue}
           />
           <TouchableOpacity
-            className={`mt-3 rounded-xl px-4 py-3 ${
-              addrLabel.trim() && addrValue.trim() ? "bg-black" : "bg-slate-300"
+            className={`mt-4 rounded-2xl px-4 py-3 ${
+              addrLabel.trim() && addrValue.trim() ? "bg-[#111827]" : "bg-slate-300"
             }`}
             onPress={addAddress}
             disabled={!addrLabel.trim() || !addrValue.trim() || saving}
@@ -280,20 +340,22 @@ export default function FavoritesScreen() {
             </Text>
           </TouchableOpacity>
 
-          {addresses.length > 0 ? (
+          {filteredAddresses.length > 0 ? (
             <View className="mt-4">
-              {addresses.map((item) => (
+              {filteredAddresses.map((item) => (
                 <View
                   key={item.id}
-                  className="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                  className="mt-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-3"
                 >
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1 pr-3">
-                      <Text className="text-sm font-semibold text-slate-800">{item.label}</Text>
-                      <Text className="text-xs text-slate-500">{item.address}</Text>
+                      <Text className="text-sm font-semibold text-emerald-900">
+                        {item.label}
+                      </Text>
+                      <Text className="text-xs text-emerald-700">{item.address}</Text>
                     </View>
                     <TouchableOpacity
-                      className="h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white"
+                      className="h-8 w-8 items-center justify-center rounded-full border border-emerald-200 bg-white"
                       onPress={async () => {
                         try {
                           await deleteFavoriteAddress(item.id);
@@ -303,32 +365,79 @@ export default function FavoritesScreen() {
                         }
                       }}
                     >
-                      <Text className="text-sm font-semibold text-slate-700">✕</Text>
+                      <Text className="text-sm font-semibold text-emerald-700">✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View className="mt-3 flex-row gap-2">
+                    <TouchableOpacity
+                      className="flex-1 rounded-2xl bg-emerald-600 px-3 py-2"
+                      onPress={() =>
+                        router.push({
+                          pathname: "/setup",
+                          params: { from: item.address }
+                        })
+                      }
+                    >
+                      <Text className="text-center text-xs font-semibold text-white">
+                        Depart
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      className="flex-1 rounded-2xl border border-emerald-200 bg-white px-3 py-2"
+                      onPress={() =>
+                        router.push({
+                          pathname: "/setup",
+                          params: { to: item.address }
+                        })
+                      }
+                    >
+                      <Text className="text-center text-xs font-semibold text-emerald-700">
+                        Arrivee
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      className="rounded-2xl border border-emerald-200 bg-white px-3 py-2"
+                      onPress={() => openMaps(item.address)}
+                    >
+                      <Text className="text-center text-xs font-semibold text-emerald-700">
+                        Maps
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               ))}
             </View>
+          ) : addresses.length > 0 && addrQuery.trim() ? (
+            <Text className="mt-4 text-sm text-emerald-700">Aucun lieu ne correspond.</Text>
           ) : null}
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-sm font-semibold text-slate-800">Contacts favoris</Text>
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Contacts favoris</Text>
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+            placeholder="Rechercher un contact"
+            placeholderTextColor="#94a3b8"
+            value={contactQuery}
+            onChangeText={setContactQuery}
+          />
+          <TextInput
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Nom"
+            placeholderTextColor="#94a3b8"
             value={contactName}
             onChangeText={setContactName}
           />
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Numero"
+            placeholderTextColor="#94a3b8"
             keyboardType="phone-pad"
             value={contactPhone}
             onChangeText={(text) => setContactPhone(formatPhone(text))}
           />
           <TouchableOpacity
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
             onPress={importFromPhone}
             disabled={saving}
           >
@@ -337,8 +446,8 @@ export default function FavoritesScreen() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            className={`mt-3 rounded-xl px-4 py-3 ${
-              contactName.trim() && contactPhone.trim() ? "bg-black" : "bg-slate-300"
+            className={`mt-3 rounded-2xl px-4 py-3 ${
+              contactName.trim() && contactPhone.trim() ? "bg-[#111827]" : "bg-slate-300"
             }`}
             onPress={addContact}
             disabled={!contactName.trim() || !contactPhone.trim() || saving}
@@ -349,15 +458,15 @@ export default function FavoritesScreen() {
           </TouchableOpacity>
 
           {showPhoneContacts ? (
-            <View className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+            <View className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
               {phoneContacts.slice(0, 8).map((contact, index) => (
                 <TouchableOpacity
                   key={`phone-${index}`}
-                  className="border-b border-slate-100 px-2 py-3"
+                  className="border-b border-amber-100 px-2 py-3"
                   onPress={() => selectPhoneContact(contact)}
                 >
-                  <Text className="text-sm text-slate-800">{contact.name}</Text>
-                  <Text className="text-xs text-slate-500">
+                  <Text className="text-sm text-amber-900">{contact.name}</Text>
+                  <Text className="text-xs text-amber-700">
                     {formatPhone(contact.phoneNumbers?.[0]?.number ?? "")}
                   </Text>
                 </TouchableOpacity>
@@ -365,12 +474,12 @@ export default function FavoritesScreen() {
             </View>
           ) : null}
 
-          {contacts.length > 0 ? (
+          {filteredContacts.length > 0 ? (
             <View className="mt-4">
-              {contacts.map((item) => (
+              {filteredContacts.map((item) => (
                 <View
                   key={item.id}
-                  className="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                  className="mt-2 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3"
                 >
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1 pr-3">
@@ -393,9 +502,27 @@ export default function FavoritesScreen() {
                       <Text className="text-sm font-semibold text-slate-700">✕</Text>
                     </TouchableOpacity>
                   </View>
+                  <View className="mt-3 flex-row gap-2">
+                    <TouchableOpacity
+                      className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                      onPress={() => openPhone(item.phone ?? "", "tel")}
+                    >
+                      <Text className="text-center text-xs font-semibold text-slate-700">
+                        Appeler
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      className="flex-1 rounded-2xl bg-[#111827] px-3 py-2"
+                      onPress={() => openPhone(item.phone ?? "", "sms")}
+                    >
+                      <Text className="text-center text-xs font-semibold text-white">SMS</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </View>
+          ) : contacts.length > 0 && contactQuery.trim() ? (
+            <Text className="mt-4 text-sm text-slate-600">Aucun contact ne correspond.</Text>
           ) : null}
         </View>
 

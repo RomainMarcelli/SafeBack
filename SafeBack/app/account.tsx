@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Link, Redirect, useRouter } from "expo-router";
-import { Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Link, useRouter } from "expo-router";
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getProfile, upsertProfile } from "../src/lib/db";
 import { supabase } from "../src/lib/supabase";
@@ -49,8 +49,14 @@ export default function AccountScreen() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!checking && !userEmail) {
+      router.replace("/auth");
+    }
+  }, [checking, userEmail, router]);
+
   if (!checking && !userEmail) {
-    return <Redirect href="/auth" />;
+    return null;
   }
 
   const saveProfile = async () => {
@@ -80,53 +86,79 @@ export default function AccountScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
-      <View className="flex-1 px-6 pt-16">
-        <View className="flex-row items-center">
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+
+      <ScrollView
+        className="flex-1 px-6"
+        contentContainerStyle={{ paddingBottom: 48 }}
+      >
+        <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="mr-3 rounded-full border border-slate-200 px-3 py-2"
+            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
-            <Text className="text-sm font-semibold text-slate-700">Retour</Text>
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+              Retour
+            </Text>
           </TouchableOpacity>
-          <Text className="text-2xl font-bold text-black">Mon compte</Text>
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              Parametres
+            </Text>
+          </View>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Email</Text>
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">
+          Mon compte
+        </Text>
+        <Text className="mt-2 text-base text-[#475569]">
+          Mets a jour tes informations personnelles et tes favoris.
+        </Text>
+
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Email</Text>
           <TextInput
-            className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
             keyboardType="email-address"
+            placeholder="ton@email.com"
+            placeholderTextColor="#94a3b8"
           />
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs uppercase text-slate-500">Profil</Text>
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Profil</Text>
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Username"
+            placeholderTextColor="#94a3b8"
             value={username}
             onChangeText={setUsername}
           />
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Prenom"
+            placeholderTextColor="#94a3b8"
             value={firstName}
             onChangeText={setFirstName}
           />
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Nom"
+            placeholderTextColor="#94a3b8"
             value={lastName}
             onChangeText={setLastName}
           />
           <TextInput
-            className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-base leading-6"
+            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="Numero"
+            placeholderTextColor="#94a3b8"
             keyboardType="phone-pad"
             value={phone}
             onChangeText={(text) => setPhone(formatPhone(text))}
@@ -141,28 +173,37 @@ export default function AccountScreen() {
         ) : null}
 
         <TouchableOpacity
-          className={`mt-6 rounded-2xl px-5 py-4 ${
-            saving ? "bg-slate-300" : "bg-black"
+          className={`mt-6 rounded-3xl px-6 py-5 shadow-lg ${
+            saving ? "bg-slate-300" : "bg-[#111827]"
           }`}
           onPress={saveProfile}
           disabled={saving}
         >
           <Text className="text-center text-base font-semibold text-white">
-            Enregistrer les modifications
+            Enregistrer
           </Text>
         </TouchableOpacity>
 
-        <View className="mt-4 rounded-2xl bg-black px-4 py-3">
-          <Link href="/favorites" className="text-center text-sm font-semibold text-white">
-            Modifier mes favoris
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">
+            Raccourcis
+          </Text>
+          <Link href="/favorites" asChild>
+            <TouchableOpacity className="mt-4 rounded-2xl bg-[#111827] px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-white">
+                Modifier mes favoris
+              </Text>
+            </TouchableOpacity>
+          </Link>
+          <Link href="/trips" asChild>
+            <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-slate-800">
+                Mes trajets
+              </Text>
+            </TouchableOpacity>
           </Link>
         </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/trips" className="text-center text-sm font-semibold text-slate-800">
-            Mes trajets
-          </Link>
-        </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
