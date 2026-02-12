@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Image, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getProfile, upsertProfile } from "../../src/lib/db";
+import { ensureMyPublicProfile, type PublicProfile } from "../../src/lib/friendsDb";
 import { clearActiveSessionId } from "../../src/lib/activeSession";
 import { supabase } from "../../src/lib/supabase";
 
@@ -26,6 +27,7 @@ export default function AccountScreen() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
+  const [publicProfile, setPublicProfile] = useState<PublicProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -46,6 +48,12 @@ export default function AccountScreen() {
           setLastName(profile.last_name ?? "");
           setPhone(profile.phone ?? "");
         }
+        try {
+          const socialProfile = await ensureMyPublicProfile();
+          setPublicProfile(socialProfile);
+        } catch {
+          setPublicProfile(null);
+        }
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement.");
       }
@@ -61,6 +69,12 @@ export default function AccountScreen() {
   if (!checking && !userEmail) {
     return null;
   }
+
+  const publicId = publicProfile?.public_id ?? "";
+  const qrPayload = publicId ? `SAFEBACK|${publicId}` : "";
+  const qrCodeUrl = qrPayload
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrPayload)}`
+    : "";
 
   const saveProfile = async () => {
     try {
@@ -136,6 +150,48 @@ export default function AccountScreen() {
         <Text className="mt-2 text-base text-[#475569]">
           Mets a jour tes informations personnelles et tes favoris.
         </Text>
+
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Mon ID SafeBack</Text>
+          <Text className="mt-2 text-2xl font-extrabold text-[#0F172A]">
+            {publicId || "Generation..."}
+          </Text>
+          <Text className="mt-1 text-sm text-slate-600">
+            Partage cet identifiant, ton QR code, ou envoie directement ton profil.
+          </Text>
+          {qrCodeUrl ? (
+            <View className="mt-4 items-center">
+              <Image
+                source={{ uri: qrCodeUrl }}
+                style={{ width: 140, height: 140, borderRadius: 12 }}
+                resizeMode="cover"
+              />
+            </View>
+          ) : null}
+          <View className="mt-4 flex-row gap-2">
+            <TouchableOpacity
+              className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+              onPress={async () => {
+                if (!publicId) return;
+                try {
+                  await Share.share({
+                    message: `Ajoute-moi sur SafeBack\nID: ${publicId}`
+                  });
+                } catch {
+                  // no-op: system share can be cancelled
+                }
+              }}
+              disabled={!publicId}
+            >
+              <Text className="text-center text-sm font-semibold text-white">Partager mon ID</Text>
+            </TouchableOpacity>
+            <Link href="/friends" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <Text className="text-center text-sm font-semibold text-slate-800">Gerer mes amis</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </View>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Email</Text>
@@ -282,9 +338,18 @@ export default function AccountScreen() {
                 <Text className="mt-1 text-sm font-semibold text-slate-800">Notifications</Text>
               </TouchableOpacity>
             </Link>
-            <Link href="/contact-groups" asChild>
+            <Link href="/friends" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
                 <Ionicons name="people-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Amis</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
+          <View className="mt-2">
+            <Link href="/contact-groups" asChild>
+              <TouchableOpacity className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="layers-outline" size={18} color="#334155" />
                 <Text className="mt-1 text-sm font-semibold text-slate-800">Groupes</Text>
               </TouchableOpacity>
             </Link>

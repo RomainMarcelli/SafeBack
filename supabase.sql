@@ -183,3 +183,7 @@ end;
 $$;
 
 grant execute on function get_shared_session_snapshot(uuid, text) to anon, authenticated;
+
+-- Then run:
+-- 1) supabase.messaging_notifications.sql
+-- 2) supabase.social_graph.sql

@@ -310,5 +310,7 @@ to anon, authenticated;
 
 -- For messaging / in-app notifications, run:
 -- supabase.messaging_notifications.sql
+-- For social graph (public ID + friend requests + friendships), run:
+-- supabase.social_graph.sql
 
 commit;

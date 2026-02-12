@@ -62,15 +62,31 @@ export async function createGuardianAssignment(guardianUserId: string): Promise<
   }
   const { data, error } = await supabase
     .from("guardianships")
-    .insert({
-      owner_user_id: ownerUserId,
-      guardian_user_id: guardianUserId,
-      status: "active"
-    })
+    .upsert(
+      {
+        owner_user_id: ownerUserId,
+        guardian_user_id: guardianUserId,
+        status: "active"
+      },
+      {
+        onConflict: "owner_user_id,guardian_user_id"
+      }
+    )
     .select("*")
     .single();
   if (error) throw error;
   return data as GuardianAssignment;
+}
+
+export async function revokeGuardianAssignment(guardianUserId: string): Promise<void> {
+  const ownerUserId = await requireUserId();
+  const { error } = await supabase
+    .from("guardianships")
+    .update({ status: "revoked" })
+    .eq("owner_user_id", ownerUserId)
+    .eq("guardian_user_id", guardianUserId)
+    .eq("status", "active");
+  if (error) throw error;
 }
 
 export async function listGuardianAssignments(): Promise<GuardianAssignment[]> {

@@ -11,6 +11,7 @@ import {
   markNotificationRead,
   type AppNotification
 } from "../../src/lib/messagingDb";
+import { respondToFriendRequest } from "../../src/lib/friendsDb";
 import { supabase } from "../../src/lib/supabase";
 
 function formatDateTime(value?: string | null) {
@@ -39,6 +40,13 @@ function notificationStyle(type: string) {
       bg: "bg-sky-50"
     };
   }
+  if (normalized.includes("friend")) {
+    return {
+      icon: "people-outline" as const,
+      tone: "text-fuchsia-700",
+      bg: "bg-fuchsia-50"
+    };
+  }
   if (normalized.includes("message")) {
     return {
       icon: "chatbubble-ellipses-outline" as const,
@@ -51,6 +59,16 @@ function notificationStyle(type: string) {
     tone: "text-slate-700",
     bg: "bg-slate-100"
   };
+}
+
+function getFriendRequestId(notification: AppNotification): string | null {
+  const data = notification.data as Record<string, unknown> | null | undefined;
+  if (!data) return null;
+  const value = data.friend_request_id;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return null;
 }
 
 export default function NotificationsScreen() {
@@ -247,6 +265,53 @@ export default function NotificationsScreen() {
                       </View>
                       <Text className="mt-1 text-sm text-slate-600">{item.body}</Text>
                       <Text className={`mt-2 text-xs ${style.tone}`}>{formatDateTime(item.created_at)}</Text>
+
+                      {item.notification_type === "friend_request_received" && !item.read_at ? (
+                        <View className="mt-3 flex-row gap-2">
+                          <TouchableOpacity
+                            className="flex-1 rounded-xl bg-emerald-600 px-3 py-2"
+                            onPress={async () => {
+                              const requestId = getFriendRequestId(item);
+                              if (!requestId) return;
+                              try {
+                                setBusy(true);
+                                setErrorMessage("");
+                                await respondToFriendRequest({ requestId, accept: true });
+                                await markNotificationRead(item.id);
+                                await refresh();
+                              } catch (error: any) {
+                                setErrorMessage(error?.message ?? "Impossible d accepter la demande.");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            disabled={busy}
+                          >
+                            <Text className="text-center text-xs font-semibold text-white">Accepter</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                            onPress={async () => {
+                              const requestId = getFriendRequestId(item);
+                              if (!requestId) return;
+                              try {
+                                setBusy(true);
+                                setErrorMessage("");
+                                await respondToFriendRequest({ requestId, accept: false, autoOpenConversation: false });
+                                await markNotificationRead(item.id);
+                                await refresh();
+                              } catch (error: any) {
+                                setErrorMessage(error?.message ?? "Impossible de refuser la demande.");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            disabled={busy}
+                          >
+                            <Text className="text-center text-xs font-semibold text-slate-700">Refuser</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
                 </TouchableOpacity>

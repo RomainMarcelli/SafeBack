@@ -1321,6 +1321,14 @@ export default function SetupScreen() {
                 Gerer les profils de groupes
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.push("/friends")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-800">
+                Gerer amis et garants
+              </Text>
+            </TouchableOpacity>
             <View className="mt-3 flex-row gap-2">
               <TouchableOpacity
                 className={`flex-1 rounded-2xl px-3 py-2 ${

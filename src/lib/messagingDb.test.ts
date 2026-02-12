@@ -43,6 +43,11 @@ function createChain(table: string) {
     lastAction = "insert";
     return chain;
   });
+  chain.upsert = vi.fn((payload: any, ...args: any[]) => {
+    state.calls.push({ table, action: "upsert", payload, args });
+    lastAction = "upsert";
+    return chain;
+  });
   chain.update = vi.fn((payload: any) => {
     state.calls.push({ table, action: "update", payload });
     lastAction = "update";
@@ -111,6 +116,7 @@ import {
   listAppNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  revokeGuardianAssignment,
   sendArrivalSignalToGuardians,
   sendConversationMessage
 } from "./messagingDb";
@@ -130,7 +136,7 @@ describe("messagingDb", () => {
     );
   });
 
-  it("createGuardianAssignment inserts row for another user", async () => {
+  it("createGuardianAssignment upserts row for another user", async () => {
     setResult("guardianships", "single", {
       data: { id: "g-1", owner_user_id: "user-1", guardian_user_id: "user-2", status: "active" },
       error: null
@@ -139,12 +145,33 @@ describe("messagingDb", () => {
     const row = await createGuardianAssignment("user-2");
     expect(row.id).toBe("g-1");
 
-    const insertCall = state.calls.find((call) => call.table === "guardianships" && call.action === "insert");
-    expect(insertCall?.payload).toMatchObject({
+    const upsertCall = state.calls.find((call) => call.table === "guardianships" && call.action === "upsert");
+    expect(upsertCall?.payload).toMatchObject({
       owner_user_id: "user-1",
       guardian_user_id: "user-2",
       status: "active"
     });
+    expect(upsertCall?.args?.[0]).toEqual({
+      onConflict: "owner_user_id,guardian_user_id"
+    });
+  });
+
+  it("revokeGuardianAssignment updates active guardian row", async () => {
+    setResult("guardianships", "eq", { data: null, error: null });
+
+    await expect(revokeGuardianAssignment("user-2")).resolves.toBeUndefined();
+
+    const updateCall = state.calls.find((call) => call.table === "guardianships" && call.action === "update");
+    expect(updateCall?.payload).toEqual({ status: "revoked" });
+    expect(
+      state.calls.some(
+        (call) =>
+          call.table === "guardianships" &&
+          call.action === "eq" &&
+          call.args?.[0] === "guardian_user_id" &&
+          call.args?.[1] === "user-2"
+      )
+    ).toBe(true);
   });
 
   it("ensureDirectConversation calls rpc and returns id", async () => {

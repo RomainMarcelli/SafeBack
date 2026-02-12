@@ -36,6 +36,7 @@ export type LocationPoint = {
 
 export type Profile = {
   user_id: string;
+  public_id?: string | null;
   username?: string | null;
   first_name?: string | null;
   last_name?: string | null;

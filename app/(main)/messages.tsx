@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Redirect } from "expo-router";
+import { Link, Redirect } from "expo-router";
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -288,6 +288,18 @@ export default function MessagesScreen() {
         <Text className="mt-2 text-base text-[#475569]">
           Echange par message, envoie un vocal beta, et garde l historique des confirmations.
         </Text>
+
+        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Reseau social</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Ajoute des amis, gere les demandes et choisis tes garants depuis un ecran dedie.
+          </Text>
+          <Link href="/friends" asChild>
+            <TouchableOpacity className="mt-3 rounded-2xl bg-[#111827] px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-white">Ouvrir la page Amis</Text>
+            </TouchableOpacity>
+          </Link>
+        </View>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">
