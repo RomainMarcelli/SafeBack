@@ -49,33 +49,44 @@ export default function AuthScreen() {
   const canSubmit = identifier.trim().length > 0 && password.trim().length > 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-100">
+    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
+      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
+      <View className="absolute top-28 -left-24 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
+      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
       <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24 }}
+        className="flex-1 px-6"
+        contentContainerStyle={{ paddingBottom: 48 }}
         keyboardShouldPersistTaps="handled"
       >
-        <View className="rounded-3xl bg-black px-6 py-7 shadow-sm">
-          <Text className="text-xs uppercase tracking-[2px] text-slate-300">SAFEBACK</Text>
-          <Text className="mt-2 text-4xl font-extrabold text-white">Connexion</Text>
-          <Text className="mt-3 text-sm leading-5 text-slate-300">
-            Suis ton trajet en temps reel et notifie tes proches en un geste.
-          </Text>
-          <View className="mt-5 rounded-full bg-white/10 px-4 py-2 self-start">
-            <Text className="text-xs font-semibold text-white">Trajets securises</Text>
+        <View className="mt-6 flex-row items-center justify-between">
+          <View className="rounded-full bg-[#111827] px-3 py-1">
+            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
+              SafeBack
+            </Text>
+          </View>
+          <View className="rounded-full border border-[#E7E0D7] bg-white/90 px-3 py-1">
+            <Text className="text-xs font-semibold text-slate-700">Connexion</Text>
           </View>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <Text className="text-xs font-semibold uppercase tracking-[1px] text-slate-500">
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Bon retour</Text>
+        <Text className="mt-2 text-base text-[#475569]">
+          Connecte-toi pour lancer un trajet et suivre ta position en temps reel.
+        </Text>
+
+        <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">
             Username ou email
           </Text>
-          <View className="mt-2 flex-row items-center rounded-2xl border border-slate-200 bg-white px-3">
-            <Ionicons name="person-outline" size={18} color="#64748b" />
+          <View className="mt-3 flex-row items-center rounded-2xl border border-slate-200 bg-[#F8FAFC] px-3">
+            <View className="h-8 w-8 items-center justify-center rounded-full bg-white">
+              <Ionicons name="person-outline" size={16} color="#334155" />
+            </View>
             <TextInput
               className="ml-2 flex-1 py-3 text-base text-slate-900"
               placeholder="username ou prenom@email.com"
+              placeholderTextColor="#94a3b8"
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="default"
@@ -84,20 +95,23 @@ export default function AuthScreen() {
             />
           </View>
 
-          <Text className="mt-4 text-xs font-semibold uppercase tracking-[1px] text-slate-500">
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
             Mot de passe
           </Text>
-          <View className="mt-2 flex-row items-center rounded-2xl border border-slate-200 bg-white px-3">
-            <Ionicons name="lock-closed-outline" size={18} color="#64748b" />
+          <View className="mt-3 flex-row items-center rounded-2xl border border-slate-200 bg-[#F8FAFC] px-3">
+            <View className="h-8 w-8 items-center justify-center rounded-full bg-white">
+              <Ionicons name="lock-closed-outline" size={16} color="#334155" />
+            </View>
             <TextInput
               className="ml-2 flex-1 py-3 text-base text-slate-900"
               placeholder="********"
+              placeholderTextColor="#94a3b8"
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
             />
             <TouchableOpacity
-              className="h-9 w-9 items-center justify-center rounded-full bg-slate-100"
+              className="h-9 w-9 items-center justify-center rounded-full bg-white"
               onPress={() => setShowPassword((prev) => !prev)}
             >
               <Ionicons
@@ -113,19 +127,19 @@ export default function AuthScreen() {
           ) : null}
 
           <TouchableOpacity
-            className={`mt-5 rounded-xl px-4 py-3 ${
-              canSubmit && !saving ? "bg-black" : "bg-slate-300"
+            className={`mt-5 rounded-2xl px-4 py-4 ${
+              canSubmit && !saving ? "bg-[#111827]" : "bg-slate-300"
             }`}
             onPress={submit}
             disabled={!canSubmit || saving}
           >
-            <Text className="text-center text-sm font-semibold text-white">
+            <Text className="text-center text-sm font-semibold uppercase tracking-wide text-white">
               {saving ? "Connexion..." : "Se connecter"}
             </Text>
           </TouchableOpacity>
 
           <Link href="/signup" asChild>
-            <TouchableOpacity className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
               <Text className="text-center text-sm font-semibold text-slate-800">
                 Creer un compte
               </Text>

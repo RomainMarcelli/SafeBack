@@ -103,7 +103,7 @@ export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const hideTabs = pathname === "/auth";
+  const hideTabs = pathname === "/auth" || pathname === "/signup" || pathname === "/friend-view";
 
   const activeHref = useMemo(() => {
     if (pathname === "/") return "/";

@@ -19,6 +19,15 @@ describe("liveShare helpers", () => {
     expect(link).toBe("safeback://friend-view?sessionId=session-123&shareToken=token-abc");
   });
 
+  it("encodes special characters in deep link params", () => {
+    const link = buildFriendViewLink({
+      sessionId: "session/123",
+      shareToken: "token=abc&x",
+      scheme: "myapp"
+    });
+    expect(link).toBe("myapp://friend-view?sessionId=session%2F123&shareToken=token%3Dabc%26x");
+  });
+
   it("normalizes points by filtering invalid values and sorting by date", () => {
     const points = normalizeSharedLocationPoints([
       { latitude: 48.86, longitude: 2.35, recordedAt: "2026-02-11T10:05:00.000Z" },
@@ -30,5 +39,16 @@ describe("liveShare helpers", () => {
     expect(points[0].latitude).toBe(48.85);
     expect(points[1].latitude).toBe(48.86);
   });
-});
 
+  it("keeps points without date and sorts them before dated points", () => {
+    const points = normalizeSharedLocationPoints([
+      { latitude: 48.86, longitude: 2.35, recordedAt: "2026-02-11T10:05:00.000Z" },
+      { latitude: 48.85, longitude: 2.34 },
+      { latitude: 48.84, longitude: 2.33, recordedAt: "2026-02-11T10:01:00.000Z" }
+    ]);
+
+    expect(points[0]).toMatchObject({ latitude: 48.85, longitude: 2.34 });
+    expect(points[1]).toMatchObject({ latitude: 48.84, longitude: 2.33 });
+    expect(points[2]).toMatchObject({ latitude: 48.86, longitude: 2.35 });
+  });
+});

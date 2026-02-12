@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -200,52 +201,77 @@ export default function AccountScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          className={`mt-3 rounded-2xl border px-5 py-4 ${
+          className={`mt-3 rounded-3xl border px-5 py-4 ${
             signingOut
               ? "border-slate-200 bg-slate-100"
-              : "border-red-200 bg-red-50"
+              : "border-rose-200 bg-rose-50"
           }`}
           onPress={signOut}
           disabled={saving || signingOut}
         >
-          <Text
-            className={`text-center text-base font-semibold ${
-              signingOut ? "text-slate-500" : "text-red-700"
-            }`}
-          >
-            {signingOut ? "Deconnexion..." : "Deconnexion"}
-          </Text>
+          <View className="flex-row items-center justify-center">
+            <Ionicons
+              name="log-out-outline"
+              size={18}
+              color={signingOut ? "#64748b" : "#be123c"}
+            />
+            <Text
+              className={`ml-2 text-base font-semibold ${
+                signingOut ? "text-slate-500" : "text-rose-700"
+              }`}
+            >
+              {signingOut ? "Deconnexion..." : "Deconnexion"}
+            </Text>
+          </View>
         </TouchableOpacity>
 
-        <View className="mt-4 rounded-2xl bg-black px-4 py-3">
-          <Link href="/favorites" className="text-center text-sm font-semibold text-white">
-            Modifier mes favoris
-          </Link>
-        </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/trips" className="text-center text-sm font-semibold text-slate-800">
-            Mes trajets
-          </Link>
-        </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/help" className="text-center text-sm font-semibold text-slate-800">
-            Aide / FAQ
-          </Link>
-        </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/about" className="text-center text-sm font-semibold text-slate-800">
-            A propos
-          </Link>
-        </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/legal" className="text-center text-sm font-semibold text-slate-800">
-            Mentions legales
-          </Link>
-        </View>
-        <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <Link href="/safety-alerts" className="text-center text-sm font-semibold text-slate-800">
-            Reglages alertes retard
-          </Link>
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Raccourcis</Text>
+
+          <View className="mt-3 flex-row gap-2">
+            <Link href="/favorites" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="heart-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Favoris</Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/trips" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="time-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Mes trajets</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/safety-alerts" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="shield-checkmark-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Alertes</Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/help" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="help-circle-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Aide</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/about" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="information-circle-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">A propos</Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/legal" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Ionicons name="document-text-outline" size={18} color="#334155" />
+                <Text className="mt-1 text-sm font-semibold text-slate-800">Mentions</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>

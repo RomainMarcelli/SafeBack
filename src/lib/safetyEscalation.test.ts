@@ -57,6 +57,37 @@ describe("safety escalation schedule", () => {
     expect(result.reminderDelaySeconds).toBe(30 * 60);
     expect(result.closeContactsDelaySeconds).toBe(120 * 60);
   });
+
+  it("falls back to route duration when expected arrival is invalid", () => {
+    const now = new Date("2026-02-11T10:00:00.000Z");
+
+    const result = computeSafetyEscalationSchedule({
+      config: CONFIG_30_120,
+      now,
+      expectedArrivalIso: "not-a-date",
+      routeDurationMinutes: 10
+    });
+
+    expect(result.baseAtIso).toBe("2026-02-11T10:10:00.000Z");
+    expect(result.reminderDelaySeconds).toBe(40 * 60);
+    expect(result.closeContactsDelaySeconds).toBe(130 * 60);
+  });
+
+  it("keeps minimum 5 seconds delay for immediate schedule", () => {
+    const now = new Date("2026-02-11T10:00:00.000Z");
+
+    const result = computeSafetyEscalationSchedule({
+      config: {
+        enabled: true,
+        reminderDelayMinutes: 0,
+        closeContactsDelayMinutes: 0
+      },
+      now
+    });
+
+    expect(result.reminderDelaySeconds).toBe(5);
+    expect(result.closeContactsDelaySeconds).toBe(5);
+  });
 });
 
 describe("formatSafetyDelay", () => {
@@ -66,4 +97,3 @@ describe("formatSafetyDelay", () => {
     expect(formatSafetyDelay(90)).toBe("1 h 30 min");
   });
 });
-
