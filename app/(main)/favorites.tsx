@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Linking, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import {
@@ -11,9 +11,14 @@ import {
   deleteFavoriteAddress,
   listContacts,
   listFavoriteAddresses
-} from "../../src/lib/db";
-import { CONTACT_GROUPS, resolveContactGroup, type ContactGroupKey } from "../../src/lib/contactGroups";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/core/db";
+import { CONTACT_GROUPS, resolveContactGroup, type ContactGroupKey } from "../../src/lib/contacts/contactGroups";
+import {
+  getOnboardingAssistantSession,
+  setOnboardingAssistantStep,
+  type OnboardingStepId
+} from "../../src/lib/home/onboarding";
+import { supabase } from "../../src/lib/core/supabase";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -146,6 +151,9 @@ export default function FavoritesScreen() {
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [guideStep, setGuideStep] = useState<OnboardingStepId | null>(null);
+  const [showGuideHint, setShowGuideHint] = useState(false);
+  const [guideTransitioning, setGuideTransitioning] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -177,6 +185,25 @@ export default function FavoritesScreen() {
     })();
   }, [userId]);
 
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const assistant = await getOnboardingAssistantSession(userId);
+      if (!assistant.active) {
+        setGuideStep(null);
+        setShowGuideHint(false);
+        return;
+      }
+      if (assistant.stepId === "favorites" || assistant.stepId === "contacts") {
+        setGuideStep(assistant.stepId);
+        setShowGuideHint(true);
+        return;
+      }
+      setGuideStep(null);
+      setShowGuideHint(false);
+    })();
+  }, [userId]);
+
   if (!checking && !userId) {
     return null;
   }
@@ -193,10 +220,25 @@ export default function FavoritesScreen() {
       setAddresses((prev) => [saved, ...prev]);
       setAddrLabel("");
       setAddrValue("");
+      if (guideStep === "favorites" && userId && !guideTransitioning) {
+        // Le parcours guidé n'avance que quand l'utilisateur ajoute réellement une nouvelle adresse.
+        setGuideTransitioning(true);
+        if (contacts.length > 0) {
+          await setOnboardingAssistantStep(userId, "safety_review");
+          setGuideStep("safety_review");
+          setShowGuideHint(false);
+          router.push("/safety-alerts");
+        } else {
+          await setOnboardingAssistantStep(userId, "contacts");
+          setGuideStep("contacts");
+          setShowGuideHint(true);
+        }
+      }
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
     } finally {
       setSaving(false);
+      setGuideTransitioning(false);
     }
   };
 
@@ -219,10 +261,19 @@ export default function FavoritesScreen() {
       setContactEmail("");
       setContactChannel("sms");
       setContactGroup("friends");
+      if (guideStep === "contacts" && userId && !guideTransitioning) {
+        // Même principe : passage à l'étape suivante uniquement après ajout d'un contact durant cette session.
+        setGuideTransitioning(true);
+        await setOnboardingAssistantStep(userId, "safety_review");
+        setGuideStep("safety_review");
+        setShowGuideHint(false);
+        router.push("/safety-alerts");
+      }
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
     } finally {
       setSaving(false);
+      setGuideTransitioning(false);
     }
   };
 
@@ -309,7 +360,7 @@ export default function FavoritesScreen() {
       <ScrollView
         className="flex-1 px-6"
         contentContainerStyle={{ paddingBottom: 48 }}
-        keyboardShouldPersistTaps={true}
+        keyboardShouldPersistTaps="always"
       >
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
@@ -629,7 +680,37 @@ export default function FavoritesScreen() {
           <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
         ) : null}
       </ScrollView>
+
+      <Modal transparent visible={showGuideHint && (guideStep === "favorites" || guideStep === "contacts")} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
+            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
+              Assistant - {guideStep === "favorites" ? "Etape 2" : "Etape 3"}
+            </Text>
+            <Text className="mt-2 text-xl font-extrabold text-cyan-950">
+              {guideStep === "favorites" ? "Ajoute une adresse favorite" : "Ajoute un proche de confiance"}
+            </Text>
+            <Text className="mt-2 text-sm text-cyan-900/80">
+              {guideStep === "favorites"
+                ? "Remplis Nom + Adresse puis touche 'Ajouter le lieu'."
+                : "Renseigne Nom + Numero (ou email) puis touche 'Ajouter le contact'."}
+            </Text>
+            <View className="mt-4 rounded-2xl border border-cyan-200 bg-white px-3 py-3">
+              <Text className="text-xs font-semibold text-cyan-800">
+                {guideStep === "favorites"
+                  ? "Des qu au moins une adresse est enregistree, on passe automatiquement a la suite."
+                  : "Des qu au moins un contact est enregistre, on passe automatiquement a la suite."}
+              </Text>
+            </View>
+            <TouchableOpacity
+              className="mt-4 rounded-2xl bg-cyan-700 px-4 py-3"
+              onPress={() => setShowGuideHint(false)}
+            >
+              <Text className="text-center text-sm font-semibold text-white">Compris</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
-

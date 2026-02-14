@@ -1,3 +1,4 @@
+// Centre d'aide : regroupe FAQ, guides et accès aux écrans d'assistance.
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
@@ -10,24 +11,36 @@ type FaqItem = {
 
 const FAQS: FaqItem[] = [
   {
-    q: "Comment lancer un trajet ?",
-    a: "Depuis l accueil, ouvre Nouveau trajet, choisis le depart, la destination, puis selectionne les contacts a prevenir."
+    q: "Comment démarrer rapidement un trajet ?",
+    a: "Depuis Accueil, appuie sur Nouveau trajet, renseigne départ et destination, puis sélectionne les proches à prévenir."
   },
   {
-    q: "A quoi servent les favoris ?",
-    a: "Les favoris enregistrent tes adresses et contacts frequents pour preparer un trajet plus rapidement."
+    q: "À quoi servent les favoris ?",
+    a: "Les favoris enregistrent tes adresses et contacts fréquents pour préparer un trajet en quelques secondes."
   },
   {
-    q: "Pourquoi je ne vois pas la carte ?",
-    a: "Certaines fonctions (ex: carte temps reel et transit) peuvent demander Premium et une cle API Google Maps."
+    q: "Pourquoi certaines cartes ou options ne s affichent pas ?",
+    a: "Le mode Transit et certaines vues avancées demandent parfois Premium et/ou une clé Google Maps configurée."
   },
   {
-    q: "Comment corriger un probleme de connexion ?",
-    a: "Verifie ton email, ton mot de passe, et la configuration EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY."
+    q: "Je n arrive pas à me connecter, que vérifier ?",
+    a: "Vérifie l email, le mot de passe et les variables EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY."
+  },
+  {
+    q: "Mon proche peut il demander de mes nouvelles ?",
+    a: "Oui, seulement si tu actives l option dans Réglages sécurité. Sinon cette demande est bloquée automatiquement."
+  },
+  {
+    q: "Comment fonctionne Arrivées auto (mode Snap) ?",
+    a: "Tu configures un lieu + des proches, puis tu choisis les conditions: Position, Wi-Fi maison, téléphone en charge (1, 2 ou 3). Le message part quand toutes les conditions choisies sont validées."
+  },
+  {
+    q: "Le matching Wi-Fi maison (SSID) fonctionne sur Expo Go ?",
+    a: "Non, il faut un dev build iOS/Android. Expo Go ne charge pas le module natif Wi-Fi utilisé pour le matching précis SSID/BSSID."
   },
   {
     q: "Les notifications ne partent pas ?",
-    a: "Sur Expo Go, certaines notifications sont limitees. Teste aussi les permissions systeme sur ton appareil."
+    a: "Sur Expo Go, certaines notifications sont limitées. Vérifie aussi les permissions système sur ton appareil."
   }
 ];
 
@@ -49,15 +62,31 @@ export default function HelpScreen() {
         </View>
 
         <Text className="mt-2 text-sm text-slate-600">
-          Reponses rapides aux questions les plus frequentes.
+          Réponses rapides aux questions les plus fréquentes.
         </Text>
 
         <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-xs uppercase text-slate-500">Support</Text>
           <Text className="mt-2 text-sm text-slate-700">
-            Si ton probleme persiste, partage une capture de l erreur et les etapes pour la
+            Si ton problème persiste, partage une capture de l erreur et les étapes pour la
             reproduire.
           </Text>
+          <TouchableOpacity
+            className="mt-4 rounded-2xl bg-[#111827] px-4 py-3"
+            onPress={() => router.push("/features-guide")}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              Ouvrir le guide complet des fonctionnalités
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            onPress={() => router.push("/privacy-center")}
+          >
+            <Text className="text-center text-sm font-semibold text-slate-700">
+              Ouvrir le centre de confidentialité
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View className="mt-4">
@@ -75,4 +104,3 @@ export default function HelpScreen() {
     </SafeAreaView>
   );
 }
-

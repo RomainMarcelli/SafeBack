@@ -1,3 +1,4 @@
+// Tests unitaires pour valider le comportement de `backgroundLocation` et prévenir les régressions.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -45,7 +46,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
   }
 }));
 
-vi.mock("../lib/db", () => ({
+vi.mock("../lib/core/db", () => ({
   insertLocationPoint: mocks.insertLocationPoint
 }));
 

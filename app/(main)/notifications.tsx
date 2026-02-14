@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,10 +9,11 @@ import {
   listAppNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  respondFriendWellbeingPing,
   type AppNotification
-} from "../../src/lib/messagingDb";
-import { respondToFriendRequest } from "../../src/lib/friendsDb";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/social/messagingDb";
+import { respondToFriendRequest } from "../../src/lib/social/friendsDb";
+import { supabase } from "../../src/lib/core/supabase";
 
 function formatDateTime(value?: string | null) {
   if (!value) return "";
@@ -38,6 +39,13 @@ function notificationStyle(type: string) {
       icon: "shield-checkmark-outline" as const,
       tone: "text-sky-700",
       bg: "bg-sky-50"
+    };
+  }
+  if (normalized.includes("wellbeing") || normalized.includes("ping")) {
+    return {
+      icon: "pulse-outline" as const,
+      tone: "text-cyan-700",
+      bg: "bg-cyan-50"
     };
   }
   if (normalized.includes("friend")) {
@@ -71,7 +79,18 @@ function getFriendRequestId(notification: AppNotification): string | null {
   return null;
 }
 
+function getPingId(notification: AppNotification): string | null {
+  const data = notification.data as Record<string, unknown> | null | undefined;
+  if (!data) return null;
+  const value = data.ping_id;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return null;
+}
+
 export default function NotificationsScreen() {
+  const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,7 +149,7 @@ export default function NotificationsScreen() {
           try {
             await refresh();
           } catch {
-            // no-op
+            // no-op : on ignore un échec ponctuel, la prochaine notification relancera le refresh.
           }
         }
       )
@@ -159,10 +178,23 @@ export default function NotificationsScreen() {
 
       <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
         <View className="mt-6 flex-row items-center justify-between">
-          <View className="rounded-full bg-[#111827] px-3 py-1">
-            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
-              Notifications
-            </Text>
+          <View className="flex-row items-center gap-2">
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
+              onPress={() => router.back()}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+                Retour
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
+              onPress={() => router.replace("/")}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
+                Accueil
+              </Text>
+            </TouchableOpacity>
           </View>
           <TouchableOpacity
             className={`rounded-full border px-4 py-2 ${
@@ -192,13 +224,13 @@ export default function NotificationsScreen() {
           </TouchableOpacity>
         </View>
 
-        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Centre d alertes</Text>
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Centre d'alertes</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Nouveau message, confirmation d arrivee et assignation garant.
+          Nouveau message, confirmation d'arrivée et assignation garant.
         </Text>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Resume</Text>
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Résumé</Text>
           <Text className="mt-2 text-2xl font-extrabold text-[#0F172A]">{unreadCount}</Text>
           <Text className="mt-1 text-sm text-slate-600">{summaryText}</Text>
           <TouchableOpacity
@@ -209,7 +241,7 @@ export default function NotificationsScreen() {
                 setErrorMessage("");
                 await refresh();
               } catch (error: any) {
-                setErrorMessage(error?.message ?? "Impossible d actualiser.");
+                setErrorMessage(error?.message ?? "Impossible d'actualiser.");
               } finally {
                 setLoading(false);
               }
@@ -280,7 +312,7 @@ export default function NotificationsScreen() {
                                 await markNotificationRead(item.id);
                                 await refresh();
                               } catch (error: any) {
-                                setErrorMessage(error?.message ?? "Impossible d accepter la demande.");
+                                setErrorMessage(error?.message ?? "Impossible d'accepter la demande.");
                               } finally {
                                 setBusy(false);
                               }
@@ -309,6 +341,53 @@ export default function NotificationsScreen() {
                             disabled={busy}
                           >
                             <Text className="text-center text-xs font-semibold text-slate-700">Refuser</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+
+                      {item.notification_type === "friend_wellbeing_ping" && !item.read_at ? (
+                        <View className="mt-3 flex-row gap-2">
+                          <TouchableOpacity
+                            className="flex-1 rounded-xl bg-emerald-600 px-3 py-2"
+                            onPress={async () => {
+                              const pingId = getPingId(item);
+                              if (!pingId) return;
+                              try {
+                                setBusy(true);
+                                setErrorMessage("");
+                                await respondFriendWellbeingPing({ pingId, arrived: true });
+                                await markNotificationRead(item.id);
+                                await refresh();
+                              } catch (error: any) {
+                                setErrorMessage(error?.message ?? "Impossible d'envoyer la reponse.");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            disabled={busy}
+                          >
+                            <Text className="text-center text-xs font-semibold text-white">Oui, bien arrive</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                            onPress={async () => {
+                              const pingId = getPingId(item);
+                              if (!pingId) return;
+                              try {
+                                setBusy(true);
+                                setErrorMessage("");
+                                await respondFriendWellbeingPing({ pingId, arrived: false });
+                                await markNotificationRead(item.id);
+                                await refresh();
+                              } catch (error: any) {
+                                setErrorMessage(error?.message ?? "Impossible d'envoyer la reponse.");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            disabled={busy}
+                          >
+                            <Text className="text-center text-xs font-semibold text-slate-700">Non, pas encore</Text>
                           </TouchableOpacity>
                         </View>
                       ) : null}

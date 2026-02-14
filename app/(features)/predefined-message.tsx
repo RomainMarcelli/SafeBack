@@ -1,3 +1,4 @@
+// Écran de personnalisation des messages prédéfinis utilisés dans les flux de sécurité.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
@@ -10,8 +11,8 @@ import {
   resetPredefinedMessageConfig,
   resolvePredefinedMessage,
   setPredefinedMessageConfig
-} from "../../src/lib/predefinedMessage";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/contacts/predefinedMessage";
+import { supabase } from "../../src/lib/core/supabase";
 
 export default function PredefinedMessageScreen() {
   const router = useRouter();

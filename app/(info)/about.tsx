@@ -1,3 +1,4 @@
+// Page de présentation de l'application, de sa mission et des principes de sécurité.
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";

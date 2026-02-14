@@ -17,7 +17,7 @@ async function ensureTaskDefined() {
   if (taskDefined) return;
   const TaskManager = await import("expo-task-manager");
   const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
-  const { insertLocationPoint } = await import("../lib/db");
+  const { insertLocationPoint } = await import("../lib/core/db");
 
   TaskManager.defineTask(TASK_NAME, async ({ data, error }) => {
     if (error) {
@@ -38,7 +38,7 @@ async function ensureTaskDefined() {
         accuracy: loc.coords.accuracy ?? null
       });
     } catch {
-      // ignore errors to avoid crashing background task
+      // Ignore les erreurs pour éviter de faire planter la tâche en arrière-plan.
     }
   });
 

@@ -1,18 +1,18 @@
 import * as Location from "expo-location";
 import Constants from "expo-constants";
-import { listFavoriteAddresses } from "../lib/db";
-import { getActiveSessionId } from "../lib/activeSession";
+import { listFavoriteAddresses } from "../lib/core/db";
+import { getActiveSessionId } from "../lib/trips/activeSession";
 import {
   detectForgottenTrip,
   type ForgottenTripConfig,
   type ForgottenTripDetectionState,
   type PreferredPlace
-} from "../lib/forgottenTrip";
+} from "../lib/trips/forgottenTrip";
 import {
   getForgottenTripConfig,
   resolvePreferredPlacesFromFavorites
-} from "../lib/forgottenTripStorage";
-import { supabase } from "../lib/supabase";
+} from "../lib/trips/forgottenTripStorage";
+import { supabase } from "../lib/core/supabase";
 
 type StartOptions = {
   onInfo?: (message: string) => void;
@@ -39,6 +39,7 @@ export async function startForgottenTripDetector(options?: StartOptions): Promis
   let lastRefreshMs = 0;
   let notificationsAllowed: boolean | null = null;
 
+  // Recharge les lieux favoris avec un TTL court pour limiter les requêtes.
   const loadPlaces = async (force = false): Promise<PreferredPlace[]> => {
     const now = Date.now();
     if (!force && now - lastRefreshMs < 3 * 60_000) {
@@ -64,6 +65,7 @@ export async function startForgottenTripDetector(options?: StartOptions): Promis
   };
 
   const ensureNotificationPermission = async (): Promise<boolean> => {
+    // Dans Expo Go, certaines permissions ne sont pas exploitables pour ce flux.
     if (Constants.appOwnership === "expo") {
       notificationsAllowed = false;
       return false;
@@ -99,6 +101,7 @@ export async function startForgottenTripDetector(options?: StartOptions): Promis
 
   await loadPlaces(true);
 
+  // Détecte les sorties de zones favorites et déclenche une notification locale si besoin.
   const subscription = await Location.watchPositionAsync(
     {
       accuracy: Location.Accuracy.Balanced,

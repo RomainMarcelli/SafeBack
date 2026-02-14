@@ -4,8 +4,8 @@ import { useLocalSearchParams } from "expo-router";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline } from "react-native-maps";
-import { getSharedSessionSnapshot, type SharedSessionSnapshot } from "../../src/lib/db";
-import { normalizeSharedLocationPoints } from "../../src/lib/liveShare";
+import { getSharedSessionSnapshot, type SharedSessionSnapshot } from "../../src/lib/core/db";
+import { normalizeSharedLocationPoints } from "../../src/lib/trips/liveShare";
 
 function formatLastUpdate(value?: string | null) {
   if (!value) return "Aucune position recue";

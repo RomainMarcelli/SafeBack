@@ -1,21 +1,22 @@
+// Écran de réglage de la détection de trajet oublié basé sur les adresses favorites.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { listFavoriteAddresses } from "../../src/lib/db";
+import { listFavoriteAddresses } from "../../src/lib/core/db";
 import {
   DEFAULT_FORGOTTEN_TRIP_CONFIG,
   inferPreferredPlaceType,
   isLikelyPreferredPlace,
   type ForgottenTripConfig
-} from "../../src/lib/forgottenTrip";
+} from "../../src/lib/trips/forgottenTrip";
 import {
   getForgottenTripConfig,
   resetForgottenTripConfig,
   setForgottenTripConfig
-} from "../../src/lib/forgottenTripStorage";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/trips/forgottenTripStorage";
+import { supabase } from "../../src/lib/core/supabase";
 
 type FavoriteAddress = {
   id: string;

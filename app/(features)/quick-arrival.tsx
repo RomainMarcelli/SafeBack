@@ -1,14 +1,15 @@
+// Action rapide "bien rentré" déclenchable sans passer par le parcours complet.
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { clearActiveSessionId } from "../../src/lib/activeSession";
-import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
-import { formatQuickArrivalMessage } from "../../src/lib/homeQuickActions";
-import { sendArrivalSignalToGuardians } from "../../src/lib/messagingDb";
-import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/predefinedMessage";
-import { supabase } from "../../src/lib/supabase";
+import { clearActiveSessionId } from "../../src/lib/trips/activeSession";
+import { syncSafeBackHomeWidget } from "../../src/lib/home/androidHomeWidget";
+import { formatQuickArrivalMessage } from "../../src/lib/home/homeQuickActions";
+import { sendArrivalSignalToGuardians } from "../../src/lib/social/messagingDb";
+import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/contacts/predefinedMessage";
+import { supabase } from "../../src/lib/core/supabase";
 
 export default function QuickArrivalScreen() {
   const router = useRouter();

@@ -1,3 +1,4 @@
+// Types applicatifs partagés pour structurer les données persistées côté base.
 export type FavoriteAddress = {
   id: string;
   label: string;
@@ -41,6 +42,24 @@ export type Profile = {
   first_name?: string | null;
   last_name?: string | null;
   phone?: string | null;
+  allow_guardian_check_requests?: boolean | null;
+  map_share_enabled?: boolean | null;
+  map_avatar?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type IncidentReport = {
+  id: string;
+  user_id: string;
+  session_id?: string | null;
+  incident_type: "sos" | "delay" | "other";
+  severity: "low" | "medium" | "high";
+  occurred_at: string;
+  location_label?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  details: string;
   created_at?: string;
   updated_at?: string;
 };

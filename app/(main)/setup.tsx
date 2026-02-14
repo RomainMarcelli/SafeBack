@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import { StatusBar } from "expo-status-bar";
-import { Link, Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
@@ -24,11 +24,12 @@ import {
   createSessionWithContacts,
   listContacts,
   listFavoriteAddresses,
+  listSessions,
   setSessionLiveShare
-} from "../../src/lib/db";
-import { setActiveSessionId } from "../../src/lib/activeSession";
-import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/liveShare";
-import { createNotificationDispatchPlan, type NotifyMode } from "../../src/lib/notifyChannels";
+} from "../../src/lib/core/db";
+import { setActiveSessionId } from "../../src/lib/trips/activeSession";
+import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/trips/liveShare";
+import { createNotificationDispatchPlan, type NotifyMode } from "../../src/lib/contacts/notifyChannels";
 import {
   CONTACT_GROUPS,
   getContactGroupMeta,
@@ -36,15 +37,24 @@ import {
   resolveContactGroup,
   type ContactGroupKey,
   type ContactGroupProfilesMap
-} from "../../src/lib/contactGroups";
+} from "../../src/lib/contacts/contactGroups";
 import {
   computeSafetyEscalationSchedule,
   formatSafetyDelay,
   getSafetyEscalationConfig
-} from "../../src/lib/safetyEscalation";
-import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
-import { supabase } from "../../src/lib/supabase";
-import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/routing";
+} from "../../src/lib/safety/safetyEscalation";
+import { syncSafeBackHomeWidget } from "../../src/lib/home/androidHomeWidget";
+import {
+  getOnboardingAssistantSession,
+  setOnboardingCompleted,
+  stopOnboardingAssistant
+} from "../../src/lib/home/onboarding";
+import { enqueuePendingTripLaunch } from "../../src/lib/trips/offlineTripQueue";
+import { confirmAction } from "../../src/lib/privacy/confirmAction";
+import { logPrivacyEvent } from "../../src/lib/privacy/privacyCenter";
+import { supabase } from "../../src/lib/core/supabase";
+import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/trips/routing";
+import { sendTripStartedSignalToGuardians } from "../../src/lib/social/messagingDb";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -195,6 +205,17 @@ function roundMinutesToStep(date: Date, step: number) {
   return date;
 }
 
+function isLikelyNetworkError(error: unknown): boolean {
+  const message = String((error as { message?: string })?.message ?? "").toLowerCase();
+  return (
+    message.includes("network") ||
+    message.includes("failed to fetch") ||
+    message.includes("fetch failed") ||
+    message.includes("offline") ||
+    message.includes("connection")
+  );
+}
+
 function AddressInput(props: {
   label: string;
   value: string;
@@ -275,12 +296,13 @@ function AddressInput(props: {
 }
 
 export default function SetupScreen() {
-  const router = useRouter();
   const params = useLocalSearchParams<{ from?: string; to?: string; mode?: string }>();
   const revealValues = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
   ).current;
   const prefillDone = useRef(false);
+  // Compteur de debug pour tracer les calculs d'itinéraire asynchrones et ignorer les résultats obsolètes.
+  const routeRequestIdRef = useRef(0);
   const [fromAddress, setFromAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [favoriteAddresses, setFavoriteAddresses] = useState<FavoriteAddress[]>([]);
@@ -321,6 +343,8 @@ export default function SetupScreen() {
   const [loadingFavorites, setLoadingFavorites] = useState(false);
   const [phoneContacts, setPhoneContacts] = useState<Contacts.Contact[]>([]);
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
+  const [guideFirstTripActive, setGuideFirstTripActive] = useState(false);
+  const [showGuideHint, setShowGuideHint] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
@@ -332,10 +356,19 @@ export default function SetupScreen() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
+      console.log("[setup/auth] initial session", {
+        hasUser: Boolean(data.session?.user?.id),
+        userId: data.session?.user?.id ?? null
+      });
       setUserId(data.session?.user.id ?? null);
       setChecking(false);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("[setup/auth] state changed", {
+        event: _event,
+        hasUser: Boolean(session?.user?.id),
+        userId: session?.user?.id ?? null
+      });
       setUserId(session?.user.id ?? null);
     });
     return () => {
@@ -345,9 +378,14 @@ export default function SetupScreen() {
 
   useEffect(() => {
     if (!checking && !userId) {
-      router.replace("/auth");
+      try {
+        console.log("[setup/nav] No active user, redirect to /auth");
+        router.replace("/auth");
+      } catch (error) {
+        console.error("[setup/nav] Redirect failed", error);
+      }
     }
-  }, [checking, userId, router]);
+  }, [checking, userId]);
 
   useEffect(() => {
     if (prefillDone.current) return;
@@ -402,6 +440,37 @@ export default function SetupScreen() {
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      try {
+        const assistant = await getOnboardingAssistantSession(userId);
+        const onFirstTripStep = assistant.active && assistant.stepId === "first_trip";
+        if (!onFirstTripStep) {
+          setGuideFirstTripActive(false);
+          setShowGuideHint(false);
+          return;
+        }
+
+        // Si un trajet existe déjà, l'onboarding guidé peut être validé immédiatement.
+        const sessions = await listSessions();
+        if (sessions.length > 0) {
+          await setOnboardingCompleted(userId);
+          await stopOnboardingAssistant(userId);
+          setGuideFirstTripActive(false);
+          setShowGuideHint(false);
+          return;
+        }
+
+        setGuideFirstTripActive(true);
+        setShowGuideHint(true);
+      } catch {
+        setGuideFirstTripActive(false);
+        setShowGuideHint(false);
+      }
+    })();
+  }, [userId]);
+
+  useEffect(() => {
     if (!fromAddress.trim() || !toAddress.trim()) {
       setRouteResult(null);
       return;
@@ -411,18 +480,41 @@ export default function SetupScreen() {
       return;
     }
     const handle = setTimeout(async () => {
+      const requestId = routeRequestIdRef.current + 1;
+      routeRequestIdRef.current = requestId;
       try {
+        console.log("[setup/route] start", {
+          requestId,
+          from: fromAddress.trim(),
+          to: toAddress.trim(),
+          mode: routeMode
+        });
         setRouteLoading(true);
         const data = await fetchRoute(fromAddress.trim(), toAddress.trim(), routeMode);
-        if (!data) {
-          console.log("[routing] Aucun itineraire", { fromAddress, toAddress, routeMode });
+        if (requestId !== routeRequestIdRef.current) {
+          console.log("[setup/route] stale result ignored", { requestId });
+          return;
         }
+        if (!data) {
+          console.log("[setup/route] no route found", { requestId });
+        }
+        console.log("[setup/route] done", {
+          requestId,
+          durationMinutes: data?.durationMinutes ?? null,
+          distanceKm: data?.distanceKm ?? null,
+          provider: data?.provider ?? null
+        });
         setRouteResult(data);
-      } catch {
-        console.log("[routing] Erreur calcul itineraire", { fromAddress, toAddress, routeMode });
+      } catch (error) {
+        if (requestId !== routeRequestIdRef.current) {
+          return;
+        }
+        console.log("[setup/route] fetch error", { requestId, error });
         setRouteResult(null);
       } finally {
-        setRouteLoading(false);
+        if (requestId === routeRequestIdRef.current) {
+          setRouteLoading(false);
+        }
       }
     }, 600);
     return () => clearTimeout(handle);
@@ -543,6 +635,14 @@ export default function SetupScreen() {
   };
 
   const importFromPhone = async () => {
+    const confirmed = await confirmAction({
+      title: "Acceder a tes contacts ?",
+      message:
+        "SafeBack va demander l'autorisation systeme pour importer rapidement tes proches depuis ton telephone.",
+      confirmLabel: "Autoriser"
+    });
+    if (!confirmed) return;
+
     const permission = await Contacts.requestPermissionsAsync();
     if (permission.status !== "granted") {
       return;
@@ -585,6 +685,14 @@ export default function SetupScreen() {
   };
 
   const useCurrentLocation = async () => {
+    const confirmed = await confirmAction({
+      title: "Utiliser ta position actuelle ?",
+      message:
+        "SafeBack va demander l'autorisation systeme de localisation pour renseigner ton point de depart.",
+      confirmLabel: "Autoriser"
+    });
+    if (!confirmed) return;
+
     const permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status !== "granted") {
       setErrorMessage("Permission localisation refusee.");
@@ -608,18 +716,53 @@ export default function SetupScreen() {
   const launchSession = () => {
     if (!fromAddress.trim() || !toAddress.trim()) return;
     (async () => {
+      if (shareLiveLocation) {
+        const confirmedShare = await confirmAction({
+          title: "Activer le partage live de position ?",
+          message:
+            "Tes proches selectionnes pourront suivre ta position pendant ce trajet. Tu pourras couper ce partage ensuite.",
+          confirmLabel: "Partager"
+        });
+        if (!confirmedShare) return;
+      }
+
       try {
         setSaving(true);
         setErrorMessage("");
         setNotificationDetails("");
         const expected = toExpectedArrivalIso(expectedHour, expectedMinute);
         const safetyConfig = await getSafetyEscalationConfig();
-        const session = await createSessionWithContacts({
-          from_address: fromAddress.trim(),
-          to_address: toAddress.trim(),
-          contactIds: selectedContacts,
-          expected_arrival_time: expected
-        });
+        const normalizedFrom = fromAddress.trim();
+        const normalizedTo = toAddress.trim();
+        let session;
+        try {
+          session = await createSessionWithContacts({
+            from_address: normalizedFrom,
+            to_address: normalizedTo,
+            contactIds: selectedContacts,
+            expected_arrival_time: expected
+          });
+        } catch (error) {
+          if (!isLikelyNetworkError(error)) {
+            throw error;
+          }
+          await enqueuePendingTripLaunch({
+            fromAddress: normalizedFrom,
+            toAddress: normalizedTo,
+            contactIds: selectedContacts,
+            expectedArrivalIso: expected,
+            shareLiveLocation
+          });
+          setLastSessionId(null);
+          setLastShareToken(null);
+          setSimulatedMessages([]);
+          setNotificationStatus("idle");
+          setNotificationDetails(
+            "Trajet prepare hors ligne. Les alertes seront envoyees automatiquement des que la connexion revient."
+          );
+          setShowLaunchModal(true);
+          return;
+        }
         await setActiveSessionId(session.id);
         let liveShareToken: string | null = null;
         let friendViewLink: string | null = null;
@@ -630,6 +773,13 @@ export default function SetupScreen() {
             enabled: true,
             shareToken: liveShareToken
           });
+          await logPrivacyEvent({
+            type: "share_enabled",
+            message: "Partage live active au lancement du trajet.",
+            data: {
+              session_id: session.id
+            }
+          });
           friendViewLink = buildFriendViewLink({
             sessionId: session.id,
             shareToken: liveShareToken
@@ -639,6 +789,13 @@ export default function SetupScreen() {
             sessionId: session.id,
             enabled: false,
             shareToken: null
+          });
+          await logPrivacyEvent({
+            type: "share_disabled",
+            message: "Partage live desactive au lancement du trajet.",
+            data: {
+              session_id: session.id
+            }
           });
         }
         setLastSessionId(session.id);
@@ -652,13 +809,25 @@ export default function SetupScreen() {
             updatedAtIso: new Date().toISOString()
           });
         } catch {
-          // no-op: widget sync must not block session launch
+          // no-op : la synchro du widget ne doit pas bloquer le lancement du trajet.
         }
         const time = formatNowTime();
         const arrivalText =
           formatTimeParts(expectedHour, expectedMinute) ||
           (routeResult ? `${routeResult.durationMinutes} min estimees` : "heure estimee inconnue");
-        const messageBody = `Je demarre mon trajet a ${time} vers ${toAddress.trim()}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
+        let guardiansNotifiedCount = 0;
+        try {
+          const guardianResult = await sendTripStartedSignalToGuardians({
+            sessionId: session.id,
+            fromAddress: normalizedFrom,
+            toAddress: normalizedTo,
+            expectedArrivalIso: expected
+          });
+          guardiansNotifiedCount = guardianResult.conversations;
+        } catch {
+          guardiansNotifiedCount = 0;
+        }
+        const messageBody = `Je demarre mon trajet a ${time} vers ${normalizedTo}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
         const subject = `SafeBack - Demarrage trajet ${time}`;
         const resolvedGroupProfiles = groupProfiles ?? (await getContactGroupProfiles());
         const departureContacts = selectedContactItems.filter((contact) => {
@@ -853,7 +1022,19 @@ export default function SetupScreen() {
         if (dispatchSummary.length === 0) {
           dispatchSummary.push("Aucun canal d envoi disponible.");
         }
+        if (guardiansNotifiedCount > 0) {
+          dispatchSummary.push(
+            `Garants notifies automatiquement: ${guardiansNotifiedCount}.`
+          );
+        }
         setNotificationDetails(dispatchSummary.join(" "));
+        if (guideFirstTripActive && userId) {
+          // Dernière étape guidée : le premier trajet lancé termine automatiquement l'onboarding.
+          await setOnboardingCompleted(userId);
+          await stopOnboardingAssistant(userId);
+          setGuideFirstTripActive(false);
+          setShowGuideHint(false);
+        }
         setShowLaunchModal(true);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur lors du lancement.");
@@ -873,13 +1054,20 @@ export default function SetupScreen() {
       <ScrollView
         className="flex-1 px-6"
         contentContainerStyle={{ paddingBottom: 170 }}
-        keyboardShouldPersistTaps={true}
+        keyboardShouldPersistTaps="always"
       >
         <Animated.View style={getRevealStyle(0)}>
           <View className="mt-4 flex-row items-center justify-between">
             <TouchableOpacity
               className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
-              onPress={() => router.back()}
+              onPress={() => {
+                try {
+                  console.log("[setup/nav] back");
+                  router.back();
+                } catch (error) {
+                  console.error("[setup/nav] back failed", error);
+                }
+              }}
             >
               <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
                 Retour
@@ -1249,7 +1437,12 @@ export default function SetupScreen() {
               className="mt-3 rounded-lg bg-[#111827] px-4 py-2"
               onPress={() => {
                 setShowTransitNotice(false);
-                router.push("/premium");
+                try {
+                  console.log("[setup/nav] push /premium");
+                  router.push("/premium");
+                } catch (error) {
+                  console.error("[setup/nav] push /premium failed", error);
+                }
               }}
             >
               <Text className="text-center text-xs font-semibold text-white">
@@ -1315,7 +1508,14 @@ export default function SetupScreen() {
             </Text>
             <TouchableOpacity
               className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              onPress={() => router.push("/contact-groups")}
+              onPress={() => {
+                try {
+                  console.log("[setup/nav] push /contact-groups");
+                  router.push("/contact-groups");
+                } catch (error) {
+                  console.error("[setup/nav] push /contact-groups failed", error);
+                }
+              }}
             >
               <Text className="text-center text-sm font-semibold text-slate-800">
                 Gerer les profils de groupes
@@ -1323,7 +1523,14 @@ export default function SetupScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              onPress={() => router.push("/friends")}
+              onPress={() => {
+                try {
+                  console.log("[setup/nav] push /friends");
+                  router.push("/friends");
+                } catch (error) {
+                  console.error("[setup/nav] push /friends failed", error);
+                }
+              }}
             >
               <Text className="text-center text-sm font-semibold text-slate-800">
                 Gerer amis et garants
@@ -1569,7 +1776,7 @@ export default function SetupScreen() {
           <TouchableOpacity
             className={`mt-8 rounded-3xl px-6 py-5 shadow-lg ${
               canLaunch ? "bg-[#111827]" : "bg-slate-300"
-            }`}
+            } ${guideFirstTripActive ? "border-2 border-cyan-300" : ""}`}
             onPress={launchSession}
             disabled={!canLaunch || saving}
           >
@@ -1590,12 +1797,44 @@ export default function SetupScreen() {
         </Animated.View>
       </ScrollView>
 
+      <Modal transparent visible={showGuideHint && guideFirstTripActive} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
+            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
+              Assistant - Etape 5
+            </Text>
+            <Text className="mt-2 text-xl font-extrabold text-cyan-950">
+              Lance ton premier trajet
+            </Text>
+            <Text className="mt-2 text-sm text-cyan-900/80">
+              Renseigne depart + destination, puis appuie sur 'Lancer le trajet'. Des que c est
+              lance, le parcours de prise en main se termine automatiquement.
+            </Text>
+            <View className="mt-4 rounded-2xl border border-cyan-200 bg-white px-3 py-3">
+              <Text className="text-xs font-semibold text-cyan-800">
+                Le bouton de lancement est surligne en bleu pour te guider.
+              </Text>
+            </View>
+            <TouchableOpacity
+              className="mt-4 rounded-2xl bg-cyan-700 px-4 py-3"
+              onPress={() => setShowGuideHint(false)}
+            >
+              <Text className="text-center text-sm font-semibold text-white">Compris</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <Modal transparent visible={showLaunchModal} animationType="fade">
         <View className="flex-1 items-center justify-center bg-black/40 px-6">
           <View className="w-full rounded-3xl bg-[#FFFDF9] p-6 shadow-lg">
-            <Text className="text-2xl font-extrabold text-[#0F172A]">Trajet lance</Text>
+            <Text className="text-2xl font-extrabold text-[#0F172A]">
+              {lastSessionId ? "Trajet lance" : "Trajet prepare hors ligne"}
+            </Text>
             <Text className="mt-2 text-sm text-slate-600">
-              Tu peux suivre le trajet en temps reel.
+              {lastSessionId
+                ? "Tu peux suivre le trajet en temps reel."
+                : "SafeBack synchronisera automatiquement le trajet et l'envoi des alertes des que la connexion revient."}
             </Text>
             <View className="mt-6 flex-row gap-3">
               <TouchableOpacity
@@ -1606,28 +1845,38 @@ export default function SetupScreen() {
                   Fermer
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
-                onPress={() => {
-                  setShowLaunchModal(false);
-                  if (lastSessionId) {
-                    router.push({
-                      pathname: "/tracking",
-                      params: {
-                        sessionId: lastSessionId,
-                        mode: routeMode,
-                        shareLiveLocation: shareLiveLocation ? "1" : "0",
-                        autoDisableShareOnArrival: autoDisableShareOnArrival ? "1" : "0",
-                        shareToken: lastShareToken ?? undefined
+              {lastSessionId ? (
+                <TouchableOpacity
+                  className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                  onPress={() => {
+                    setShowLaunchModal(false);
+                    if (lastSessionId) {
+                      try {
+                        console.log("[setup/nav] push /tracking", {
+                          sessionId: lastSessionId,
+                          mode: routeMode
+                        });
+                        router.push({
+                          pathname: "/tracking",
+                          params: {
+                            sessionId: lastSessionId,
+                            mode: routeMode,
+                            shareLiveLocation: shareLiveLocation ? "1" : "0",
+                            autoDisableShareOnArrival: autoDisableShareOnArrival ? "1" : "0",
+                            shareToken: lastShareToken ?? undefined
+                          }
+                        });
+                      } catch (error) {
+                        console.error("[setup/nav] push /tracking failed", error);
                       }
-                    });
-                  }
-                }}
-              >
-                <Text className="text-center text-sm font-semibold text-white">
-                  Suivre le trajet
-                </Text>
-              </TouchableOpacity>
+                    }
+                  }}
+                >
+                  <Text className="text-center text-sm font-semibold text-white">
+                    Suivre le trajet
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>
@@ -1700,4 +1949,3 @@ export default function SetupScreen() {
     </SafeAreaView>
   );
 }
-

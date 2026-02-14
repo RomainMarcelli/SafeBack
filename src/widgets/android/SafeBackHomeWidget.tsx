@@ -4,7 +4,7 @@ import {
   formatWidgetStatusLabel,
   formatWidgetUpdatedAt,
   type HomeWidgetState
-} from "../../lib/homeWidgetState";
+} from "../../lib/home/homeWidgetState";
 
 type Props = {
   widgetInfo: WidgetInfo;
@@ -77,6 +77,22 @@ export function SafeBackHomeWidget({ widgetInfo, state }: Props) {
         <FlexWidget
           style={{
             flex: 1,
+            backgroundColor: "#DC2626",
+            borderRadius: 10,
+            paddingVertical: 8,
+            paddingHorizontal: 8
+          }}
+          clickAction="OPEN_URI"
+          clickActionData={{ uri: "safeback://quick-sos" }}
+        >
+          <TextWidget
+            text="SOS"
+            style={{ color: "#FEE2E2", fontSize: 11, textAlign: "center", fontWeight: "700" }}
+          />
+        </FlexWidget>
+        <FlexWidget
+          style={{
+            flex: 1,
             backgroundColor: "#059669",
             borderRadius: 10,
             paddingVertical: 8,
@@ -90,20 +106,21 @@ export function SafeBackHomeWidget({ widgetInfo, state }: Props) {
             style={{ color: "#ECFDF5", fontSize: 11, textAlign: "center", fontWeight: "700" }}
           />
         </FlexWidget>
-        <FlexWidget
-          style={{
-            backgroundColor: "#334155",
-            borderRadius: 10,
-            paddingVertical: 8,
-            paddingHorizontal: 10
-          }}
-          clickAction="SAFEBACK_WIDGET_REFRESH"
-        >
-          <TextWidget
-            text="Maj"
-            style={{ color: "#E2E8F0", fontSize: 11, textAlign: "center", fontWeight: "700" }}
-          />
-        </FlexWidget>
+      </FlexWidget>
+      <FlexWidget
+        style={{
+          marginTop: 8,
+          backgroundColor: "#334155",
+          borderRadius: 10,
+          paddingVertical: 6,
+          paddingHorizontal: 10
+        }}
+        clickAction="SAFEBACK_WIDGET_REFRESH"
+      >
+        <TextWidget
+          text="Actualiser"
+          style={{ color: "#E2E8F0", fontSize: 10, textAlign: "center", fontWeight: "700" }}
+        />
       </FlexWidget>
     </FlexWidget>
   );

@@ -14,7 +14,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.kyro31.SafeBack"
+      "bundleIdentifier": "com.kyro31.SafeBack",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "SafeBack utilise le réseau local pour valider ton Wi-Fi maison en arrivée automatique.",
+        "NSLocationWhenInUseUsageDescription": "SafeBack utilise ta position pour confirmer automatiquement ton arrivée."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -30,6 +34,8 @@
       "expo-router",
       "@react-native-community/datetimepicker",
       "expo-font",
+      "expo-quick-actions",
+      "react-native-wifi-reborn",
       [
         "react-native-android-widget",
         {
@@ -37,7 +43,7 @@
             {
               "name": "SafeBackHomeWidget",
               "label": "SafeBack rapide",
-              "description": "Lancer un trajet et envoyer \"bien rentre\" en 1 clic",
+              "description": "Trajet, SOS et confirmation \"bien rentre\" en 1 clic",
               "minWidth": "250dp",
               "minHeight": "120dp",
               "targetCellWidth": 4,

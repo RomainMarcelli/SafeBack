@@ -2,9 +2,20 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { Link, Redirect } from "expo-router";
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { supabase } from "../../src/lib/supabase";
+import { signInWithCredentials } from "../../src/lib/auth/authFlows";
+import { supabase } from "../../src/lib/core/supabase";
 
 export default function AuthScreen() {
   const [identifier, setIdentifier] = useState("");
@@ -34,11 +45,10 @@ export default function AuthScreen() {
 
   const submit = async () => {
     try {
+      Keyboard.dismiss();
       setSaving(true);
       setErrorMessage("");
-      const email = identifier.trim();
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      await signInWithCredentials({ identifier, password });
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur de connexion.");
     } finally {
@@ -54,11 +64,18 @@ export default function AuthScreen() {
       <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
       <View className="absolute top-28 -left-24 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
       <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
-      <ScrollView
-        className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: 48 }}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {/* Permet de fermer le clavier en dehors des champs. */}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <ScrollView
+            className="flex-1 px-6"
+            contentContainerStyle={{ paddingBottom: 48 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
         <View className="mt-6 flex-row items-center justify-between">
           <View className="rounded-full bg-[#111827] px-3 py-1">
             <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
@@ -72,7 +89,7 @@ export default function AuthScreen() {
 
         <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Bon retour</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Connecte-toi pour lancer un trajet et suivre ta position en temps reel.
+          Connecte-toi pour lancer un trajet et suivre ta position en temps réel.
         </Text>
 
         <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -140,14 +157,15 @@ export default function AuthScreen() {
 
           <Link href="/signup" asChild>
             <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-              <Text className="text-center text-sm font-semibold text-slate-800">
-                Creer un compte
+                <Text className="text-center text-sm font-semibold text-slate-800">
+                Créer un compte
               </Text>
             </TouchableOpacity>
           </Link>
         </View>
-      </ScrollView>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-

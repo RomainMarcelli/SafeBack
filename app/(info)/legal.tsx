@@ -1,3 +1,4 @@
+// Page légale : conditions, informations réglementaires et mentions obligatoires.
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";

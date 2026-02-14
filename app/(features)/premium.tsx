@@ -1,10 +1,11 @@
+// Écran des options premium et de l'état d'abonnement utilisateur.
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getPremium, setPremium } from "../../src/lib/premium";
-import { supabase } from "../../src/lib/supabase";
+import { getPremium, setPremium } from "../../src/lib/subscription/premium";
+import { supabase } from "../../src/lib/core/supabase";
 
 export default function PremiumScreen() {
   const router = useRouter();

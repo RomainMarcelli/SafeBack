@@ -15,8 +15,8 @@ import {
   type Conversation,
   type ConversationMessage,
   type ConversationParticipant
-} from "../../src/lib/messagingDb";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/social/messagingDb";
+import { supabase } from "../../src/lib/core/supabase";
 
 function formatTime(value?: string | null) {
   if (!value) return "--:--";
@@ -138,7 +138,7 @@ export default function MessagesScreen() {
               loadArrivalHistory()
             ]);
           } catch {
-            // keep previous state
+            // Conserve l'état précédent.
           }
         }
       )

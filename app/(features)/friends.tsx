@@ -1,7 +1,16 @@
+// Écran réseau social : demandes d'amis, garants, ping d'arrivée et accès carte des proches.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
-import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  ScrollView,
+  Share,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ensureMyPublicProfile,
@@ -13,14 +22,23 @@ import {
   type FriendRequestWithProfiles,
   type FriendWithProfile,
   type PublicProfile
-} from "../../src/lib/friendsDb";
+} from "../../src/lib/social/friendsDb";
 import {
   createGuardianAssignment,
   ensureDirectConversation,
   listGuardianAssignments,
-  revokeGuardianAssignment
-} from "../../src/lib/messagingDb";
-import { supabase } from "../../src/lib/supabase";
+  requestGuardianWellbeingCheck,
+  revokeGuardianAssignment,
+  sendFriendWellbeingPing
+} from "../../src/lib/social/messagingDb";
+import {
+  getFriendOnlineState,
+  listFriendMapPresence,
+  type FriendMapPresence
+} from "../../src/lib/social/friendMap";
+import { buildFriendInviteMessage } from "../../src/lib/social/friendInvite";
+import { confirmAction } from "../../src/lib/privacy/confirmAction";
+import { supabase } from "../../src/lib/core/supabase";
 
 function profileLabel(profile?: PublicProfile) {
   if (!profile) return "Profil";
@@ -31,6 +49,16 @@ function profileLabel(profile?: PublicProfile) {
   return `ID ${profile.public_id}`;
 }
 
+function formatLastSeen(value?: string | null): string {
+  if (!value) return "jamais";
+  const date = new Date(value);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${day}/${month} ${hours}:${minutes}`;
+}
+
 export default function FriendsScreen() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
@@ -39,11 +67,15 @@ export default function FriendsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [me, setMe] = useState<PublicProfile | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [requestMessage, setRequestMessage] = useState("Salut, on se connecte sur SafeBack ?");
+  const [inviteNote, setInviteNote] = useState("");
   const [searchResults, setSearchResults] = useState<PublicProfile[]>([]);
   const [searching, setSearching] = useState(false);
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [requests, setRequests] = useState<FriendRequestWithProfiles[]>([]);
   const [activeGuardianIds, setActiveGuardianIds] = useState<string[]>([]);
+  const [ownersWhoAssignedMe, setOwnersWhoAssignedMe] = useState<string[]>([]);
+  const [presenceByUserId, setPresenceByUserId] = useState<Record<string, FriendMapPresence>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -68,13 +100,27 @@ export default function FriendsScreen() {
       listFriendRequests(),
       listGuardianAssignments()
     ]);
+
+    const presenceRows = await listFriendMapPresence(friendRows.map((row) => row.friend_user_id));
+    const nextPresenceById: Record<string, FriendMapPresence> = {};
+    for (const row of presenceRows) {
+      nextPresenceById[row.user_id] = row;
+    }
+
     setMe(myProfile);
     setFriends(friendRows);
     setRequests(requestRows);
+    setPresenceByUserId(nextPresenceById);
+
     const ownerGuardianIds = guardians
       .filter((row) => row.owner_user_id === userId && row.status === "active")
       .map((row) => row.guardian_user_id);
     setActiveGuardianIds(ownerGuardianIds);
+
+    const guardianOwnerIds = guardians
+      .filter((row) => row.guardian_user_id === userId && row.status === "active")
+      .map((row) => row.owner_user_id);
+    setOwnersWhoAssignedMe([...new Set(guardianOwnerIds)]);
   };
 
   useEffect(() => {
@@ -100,6 +146,7 @@ export default function FriendsScreen() {
     () => requests.filter((request) => request.direction === "incoming"),
     [requests]
   );
+
   const outgoingTargetIds = useMemo(
     () =>
       new Set(
@@ -109,10 +156,8 @@ export default function FriendsScreen() {
       ),
     [requests]
   );
-  const friendIds = useMemo(
-    () => new Set(friends.map((friend) => friend.friend_user_id)),
-    [friends]
-  );
+
+  const friendIds = useMemo(() => new Set(friends.map((friend) => friend.friend_user_id)), [friends]);
 
   const onSearch = async () => {
     const query = searchQuery.trim();
@@ -133,21 +178,68 @@ export default function FriendsScreen() {
   };
 
   const sendRequest = async (targetUserId: string) => {
+    const confirmed = await confirmAction({
+      title: "Envoyer cette demande d'ami ?",
+      message:
+        "Ton profil public et ton message seront visibles par cette personne. Tu confirmes l'envoi ?",
+      confirmLabel: "Envoyer"
+    });
+    if (!confirmed) return;
+
     try {
       setBusyAction(`send-${targetUserId}`);
       setErrorMessage("");
       setSuccessMessage("");
-      await sendFriendRequest(targetUserId);
+
+      const normalizedMessage = requestMessage.trim();
+      await sendFriendRequest(targetUserId, normalizedMessage ? normalizedMessage : undefined);
       await refresh();
-      setSuccessMessage("Demande d ami envoyee.");
+      setSuccessMessage("Demande d'ami envoyee.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d envoyer la demande.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyer la demande.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const shareMyProfile = async () => {
+    const confirmed = await confirmAction({
+      title: "Partager ton identifiant ?",
+      message:
+        "Le message peut etre transmis hors de l'application. Verifie que tu fais confiance au destinataire.",
+      confirmLabel: "Partager"
+    });
+    if (!confirmed) return;
+
+    try {
+      setBusyAction("share-id");
+      setErrorMessage("");
+      const message = buildFriendInviteMessage({
+        publicId: me?.public_id ?? "",
+        note: inviteNote
+      });
+      await Share.share({
+        title: "Invitation SafeBack",
+        message
+      });
+      setSuccessMessage("Message de partage pret et envoye.");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible d'ouvrir le partage.");
     } finally {
       setBusyAction(null);
     }
   };
 
   const respondRequest = async (requestId: string, accept: boolean) => {
+    const confirmed = await confirmAction({
+      title: accept ? "Accepter cette demande ?" : "Refuser cette demande ?",
+      message: accept
+        ? "Cette personne deviendra ton ami et pourra te contacter plus rapidement."
+        : "La demande sera refusee. Tu pourras toujours la rechercher plus tard.",
+      confirmLabel: accept ? "Accepter" : "Refuser"
+    });
+    if (!confirmed) return;
+
     try {
       setBusyAction(`${accept ? "accept" : "reject"}-${requestId}`);
       setErrorMessage("");
@@ -169,7 +261,7 @@ export default function FriendsScreen() {
       await ensureDirectConversation(otherUserId);
       router.push("/messages");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d ouvrir la conversation.");
+      setErrorMessage(error?.message ?? "Impossible d'ouvrir la conversation.");
     } finally {
       setBusyAction(null);
     }
@@ -177,6 +269,15 @@ export default function FriendsScreen() {
 
   const toggleGuardian = async (friendUserId: string) => {
     const isGuardian = activeGuardianIds.includes(friendUserId);
+    const confirmed = await confirmAction({
+      title: isGuardian ? "Retirer ce garant ?" : "Definir ce garant ?",
+      message: isGuardian
+        ? "Ce proche ne recevra plus tes alertes de trajet."
+        : "Ce proche recevra tes infos de securite (depart, retards, SOS).",
+      confirmLabel: isGuardian ? "Retirer" : "Definir"
+    });
+    if (!confirmed) return;
+
     try {
       setBusyAction(`guardian-${friendUserId}`);
       setErrorMessage("");
@@ -195,6 +296,67 @@ export default function FriendsScreen() {
     }
   };
 
+  const requestCheck = async (ownerUserId: string) => {
+    const confirmed = await confirmAction({
+      title: "Envoyer une verification ?",
+      message: "SafeBack enverra une demande de confirmation rapide a ce proche.",
+      confirmLabel: "Envoyer"
+    });
+    if (!confirmed) return;
+
+    try {
+      setBusyAction(`check-${ownerUserId}`);
+      setErrorMessage("");
+      setSuccessMessage("");
+      const result = await requestGuardianWellbeingCheck(ownerUserId);
+      if (result.status === "disabled") {
+        setSuccessMessage("Ce proche a desactive cette fonctionnalite.");
+        return;
+      }
+      if (result.status === "not_guardian") {
+        setErrorMessage("Tu n'es pas configure comme garant actif pour ce proche.");
+        return;
+      }
+      setSuccessMessage(
+        result.has_recent_trip_24h
+          ? "Demande envoyee. Un trajet recent existe deja."
+          : "Demande envoyee. Aucun trajet recent detecte."
+      );
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible d'envoyer la demande.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const pingArrival = async (friendUserId: string) => {
+    const confirmed = await confirmAction({
+      title: "Lancer le ping d'arrivee ?",
+      message:
+        "Ton proche recevra une notification avec reponse Oui/Non. Tu seras informe automatiquement.",
+      confirmLabel: "Envoyer"
+    });
+    if (!confirmed) return;
+
+    try {
+      setBusyAction(`ping-${friendUserId}`);
+      setErrorMessage("");
+      setSuccessMessage("");
+      const result = await sendFriendWellbeingPing(friendUserId);
+      if (result.status === "already_pending") {
+        setSuccessMessage("Une verification est deja en attente pour ce proche.");
+        return;
+      }
+      setSuccessMessage("Demande de reassurance envoyee en 1 clic.");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible d'envoyer le ping d'arrivee.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const ownerAsGuardianSet = useMemo(() => new Set(ownersWhoAssignedMe), [ownersWhoAssignedMe]);
+
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
@@ -210,38 +372,75 @@ export default function FriendsScreen() {
           >
             <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Retour</Text>
           </TouchableOpacity>
-          <View className="rounded-full bg-[#111827] px-3 py-1">
-            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">Amis</Text>
+          <View className="flex-row gap-2">
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
+              onPress={() => router.push("/friends-map")}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Carte live</Text>
+            </TouchableOpacity>
+            <View className="rounded-full bg-[#111827] px-3 py-1">
+              <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">Amis</Text>
+            </View>
           </View>
         </View>
 
         <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Reseau proches</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Ajoute des amis, demarre une discussion et choisis qui peut etre garant.
+          Ajoute des amis, discute, active tes garants et fais une verification arrivee en 1 clic.
         </Text>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Mon identifiant</Text>
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Mon identifiant premium</Text>
           <Text className="mt-2 text-2xl font-extrabold text-[#0F172A]">{me?.public_id ?? "..."}</Text>
           <Text className="mt-1 text-sm text-slate-600">
-            Partage cet ID ou laisse tes proches te trouver avec ton pseudo.
+            Envoie une invitation lisible avec ton ID + mode d'emploi, plutot qu'un texte brut.
           </Text>
-          <TouchableOpacity
-            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-            onPress={async () => {
-              try {
-                setRefreshing(true);
-                await refresh();
-              } finally {
-                setRefreshing(false);
-              }
-            }}
-            disabled={refreshing || loading}
-          >
-            <Text className="text-center text-sm font-semibold text-slate-700">
-              {refreshing ? "Actualisation..." : "Actualiser"}
+
+          <View className="mt-3 rounded-2xl border border-[#E7E0D7] bg-[#F8FAFC] px-4 py-3">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Apercu message</Text>
+            <Text className="mt-2 text-sm text-slate-700">
+              {buildFriendInviteMessage({
+                publicId: me?.public_id ?? "",
+                note: inviteNote
+              })}
             </Text>
-          </TouchableOpacity>
+          </View>
+
+          <TextInput
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
+            value={inviteNote}
+            onChangeText={setInviteNote}
+            placeholder="Ajoute une phrase perso (optionnel)"
+            placeholderTextColor="#94a3b8"
+            maxLength={120}
+          />
+
+          <View className="mt-3 flex-row gap-2">
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-4 py-3 ${busyAction === "share-id" ? "bg-slate-300" : "bg-[#0F766E]"}`}
+              onPress={shareMyProfile}
+              disabled={Boolean(busyAction)}
+            >
+              <Text className="text-center text-sm font-semibold text-white">Partager mon ID</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={async () => {
+                try {
+                  setRefreshing(true);
+                  await refresh();
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+              disabled={refreshing || loading}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                {refreshing ? "..." : "Actualiser"}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -253,6 +452,14 @@ export default function FriendsScreen() {
             placeholder="Pseudo ou ID public"
             placeholderTextColor="#94a3b8"
             autoCapitalize="none"
+          />
+          <TextInput
+            className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900"
+            value={requestMessage}
+            onChangeText={setRequestMessage}
+            placeholder="Message avec la demande d'ami"
+            placeholderTextColor="#94a3b8"
+            maxLength={120}
           />
           <TouchableOpacity
             className={`mt-3 rounded-2xl px-4 py-3 ${
@@ -345,12 +552,40 @@ export default function FriendsScreen() {
           ) : (
             friends.map((friend) => {
               const isGuardian = activeGuardianIds.includes(friend.friend_user_id);
+              const canAskForCheck = ownerAsGuardianSet.has(friend.friend_user_id);
+              const presence = presenceByUserId[friend.friend_user_id];
+              const onlineState = getFriendOnlineState({
+                network_connected: presence?.network_connected,
+                updated_at: presence?.updated_at
+              });
+              const tone =
+                onlineState === "online"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : onlineState === "recently_offline"
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-slate-100 text-slate-700";
+              const stateLabel =
+                onlineState === "online"
+                  ? "En ligne"
+                  : onlineState === "recently_offline"
+                    ? "Connexion recente"
+                    : "Hors ligne";
+
               return (
                 <View key={`friend-${friend.id}`} className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3">
-                  <Text className="text-sm font-semibold text-slate-900">{profileLabel(friend.profile)}</Text>
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-sm font-semibold text-slate-900">{profileLabel(friend.profile)}</Text>
+                    <View className={`rounded-full px-3 py-1 ${tone}`}>
+                      <Text className="text-[11px] font-semibold uppercase tracking-wider">{stateLabel}</Text>
+                    </View>
+                  </View>
                   <Text className="mt-1 text-xs text-slate-500">
                     ID {friend.profile?.public_id ?? friend.friend_user_id.slice(0, 8)}
                   </Text>
+                  <Text className="mt-1 text-xs text-slate-500">
+                    Derniere activite: {formatLastSeen(presence?.updated_at)}
+                  </Text>
+
                   <View className="mt-3 flex-row gap-2">
                     <TouchableOpacity
                       className={`flex-1 rounded-xl px-3 py-2 ${
@@ -362,9 +597,7 @@ export default function FriendsScreen() {
                       <Text className="text-center text-xs font-semibold text-white">Discuter</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      className={`flex-1 rounded-xl px-3 py-2 ${
-                        isGuardian ? "bg-amber-200" : "bg-[#0F766E]"
-                      }`}
+                      className={`flex-1 rounded-xl px-3 py-2 ${isGuardian ? "bg-amber-200" : "bg-[#0F766E]"}`}
                       onPress={() => toggleGuardian(friend.friend_user_id)}
                       disabled={Boolean(busyAction)}
                     >
@@ -373,6 +606,30 @@ export default function FriendsScreen() {
                       </Text>
                     </TouchableOpacity>
                   </View>
+
+                  <TouchableOpacity
+                    className={`mt-2 rounded-xl px-3 py-2 ${
+                      busyAction === `ping-${friend.friend_user_id}` ? "bg-slate-300" : "bg-[#0284C7]"
+                    }`}
+                    onPress={() => pingArrival(friend.friend_user_id)}
+                    disabled={Boolean(busyAction)}
+                  >
+                    <Text className="text-center text-xs font-semibold text-white">Ping arrivee (1 clic)</Text>
+                  </TouchableOpacity>
+
+                  {canAskForCheck ? (
+                    <TouchableOpacity
+                      className={`mt-2 rounded-xl px-3 py-2 ${
+                        busyAction === `check-${friend.friend_user_id}` ? "bg-slate-300" : "bg-sky-600"
+                      }`}
+                      onPress={() => requestCheck(friend.friend_user_id)}
+                      disabled={Boolean(busyAction)}
+                    >
+                      <Text className="text-center text-xs font-semibold text-white">
+                        Demander s'il est bien rentre
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               );
             })

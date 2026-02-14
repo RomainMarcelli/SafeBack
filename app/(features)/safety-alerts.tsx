@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
-import { ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Modal, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { getProfile, upsertProfile } from "../../src/lib/core/db";
 import {
   DEFAULT_SAFETY_ESCALATION_CONFIG,
   formatSafetyDelay,
@@ -11,8 +12,15 @@ import {
   SAFETY_CLOSE_CONTACT_OPTIONS,
   SAFETY_REMINDER_OPTIONS,
   setSafetyEscalationConfig
-} from "../../src/lib/safetyEscalation";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/safety/safetyEscalation";
+import {
+  getOnboardingAssistantSession,
+  markOnboardingManualStep,
+  setOnboardingAssistantStep
+} from "../../src/lib/home/onboarding";
+import { confirmAction } from "../../src/lib/privacy/confirmAction";
+import { logPrivacyEvent } from "../../src/lib/privacy/privacyCenter";
+import { supabase } from "../../src/lib/core/supabase";
 
 export default function SafetyAlertsScreen() {
   const router = useRouter();
@@ -22,10 +30,16 @@ export default function SafetyAlertsScreen() {
   const [enabled, setEnabled] = useState(true);
   const [reminderDelayMinutes, setReminderDelayMinutes] = useState<number>(30);
   const [closeContactsDelayMinutes, setCloseContactsDelayMinutes] = useState<number>(120);
+  const [allowGuardianCheckRequests, setAllowGuardianCheckRequests] = useState(false);
+  const [initialEnabled, setInitialEnabled] = useState(true);
+  const [initialGuardianChecks, setInitialGuardianChecks] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [guideActive, setGuideActive] = useState(false);
+  const [showGuideHint, setShowGuideHint] = useState(false);
+  const [guideTransitioning, setGuideTransitioning] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -44,10 +58,14 @@ export default function SafetyAlertsScreen() {
     (async () => {
       try {
         setLoading(true);
-        const config = await getSafetyEscalationConfig();
+        const [config, profile] = await Promise.all([getSafetyEscalationConfig(), getProfile()]);
         setEnabled(config.enabled);
+        setInitialEnabled(config.enabled);
         setReminderDelayMinutes(config.reminderDelayMinutes);
         setCloseContactsDelayMinutes(config.closeContactsDelayMinutes);
+        const guardianEnabled = Boolean(profile?.allow_guardian_check_requests);
+        setAllowGuardianCheckRequests(guardianEnabled);
+        setInitialGuardianChecks(guardianEnabled);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement.");
       } finally {
@@ -56,11 +74,56 @@ export default function SafetyAlertsScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      try {
+        const assistant = await getOnboardingAssistantSession(userId);
+        const shouldGuide = assistant.active && assistant.stepId === "safety_review";
+        setGuideActive(shouldGuide);
+        setShowGuideHint(shouldGuide);
+      } catch {
+        setGuideActive(false);
+        setShowGuideHint(false);
+      }
+    })();
+  }, [userId]);
+
   if (!checking && !userId) {
     return <Redirect href="/auth" />;
   }
 
   const save = async () => {
+    if (!enabled && initialEnabled) {
+      const confirmDisableAlerts = await confirmAction({
+        title: "Desactiver les alertes de securite ?",
+        message:
+          "Tu ne recevras plus de relances automatiques en cas de retard. Veux-tu continuer ?",
+        confirmLabel: "Desactiver"
+      });
+      if (!confirmDisableAlerts) return;
+    }
+
+    if (allowGuardianCheckRequests && !initialGuardianChecks) {
+      const confirmEnableGuardianChecks = await confirmAction({
+        title: "Autoriser les demandes des garants ?",
+        message:
+          "Tes garants pourront te demander une confirmation d'arrivee quand aucun trajet n'est programme.",
+        confirmLabel: "Autoriser"
+      });
+      if (!confirmEnableGuardianChecks) return;
+    }
+
+    if (!allowGuardianCheckRequests && initialGuardianChecks) {
+      const confirmDisableGuardianChecks = await confirmAction({
+        title: "Bloquer les demandes des garants ?",
+        message:
+          "Tes garants ne pourront plus te demander de confirmation rapide depuis l'app.",
+        confirmLabel: "Bloquer"
+      });
+      if (!confirmDisableGuardianChecks) return;
+    }
+
     try {
       setSaving(true);
       setErrorMessage("");
@@ -70,11 +133,35 @@ export default function SafetyAlertsScreen() {
         reminderDelayMinutes,
         closeContactsDelayMinutes
       });
-      setSuccessMessage("Reglages enregistres.");
+      // Conserve la préférence de confidentialité dans le profil pour appliquer les contrôles côté serveur.
+      await upsertProfile({
+        allow_guardian_check_requests: allowGuardianCheckRequests
+      });
+      setInitialEnabled(enabled);
+      setInitialGuardianChecks(allowGuardianCheckRequests);
+      await logPrivacyEvent({
+        type: allowGuardianCheckRequests ? "guardian_check_enabled" : "guardian_check_disabled",
+        message: allowGuardianCheckRequests
+          ? "Demande de nouvelles par garant activee."
+          : "Demande de nouvelles par garant desactivee."
+      });
+      if (guideActive && userId && !guideTransitioning) {
+        // Parcours guidé : dès que les réglages sécurité sont enregistrés, cette étape est validée puis on passe au premier trajet.
+        setGuideTransitioning(true);
+        await markOnboardingManualStep(userId, "safety_review");
+        await setOnboardingAssistantStep(userId, "first_trip");
+        setGuideActive(false);
+        setShowGuideHint(false);
+        setSuccessMessage("Reglages enregistres. On passe au premier trajet.");
+        router.push("/setup");
+      } else {
+        setSuccessMessage("Reglages enregistres.");
+      }
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur de sauvegarde.");
     } finally {
       setSaving(false);
+      setGuideTransitioning(false);
     }
   };
 
@@ -217,6 +304,45 @@ export default function SafetyAlertsScreen() {
           </View>
         </View>
 
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">
+            Verification par les garants
+          </Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Autorise tes garants a demander des nouvelles via l application quand aucun trajet n est programme.
+          </Text>
+          <View className="mt-3 flex-row gap-2">
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                allowGuardianCheckRequests ? "bg-[#0F766E]" : "border border-slate-200 bg-white"
+              }`}
+              onPress={() => setAllowGuardianCheckRequests(true)}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  allowGuardianCheckRequests ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Activer
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl px-3 py-3 ${
+                !allowGuardianCheckRequests ? "bg-rose-600" : "border border-slate-200 bg-white"
+              }`}
+              onPress={() => setAllowGuardianCheckRequests(false)}
+            >
+              <Text
+                className={`text-center text-sm font-semibold ${
+                  !allowGuardianCheckRequests ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Desactiver
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {errorMessage ? <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text> : null}
         {successMessage ? <Text className="mt-3 text-sm text-emerald-600">{successMessage}</Text> : null}
 
@@ -239,6 +365,34 @@ export default function SafetyAlertsScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal transparent visible={showGuideHint && guideActive} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
+            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
+              Assistant - Etape 4
+            </Text>
+            <Text className="mt-2 text-xl font-extrabold text-cyan-950">
+              Regle tes alertes de retard
+            </Text>
+            <Text className="mt-2 text-sm text-cyan-900/80">
+              Choisis les delais de rappel puis touche 'Enregistrer'. Une fois fait, on t envoie
+              directement sur le premier trajet.
+            </Text>
+            <View className="mt-4 rounded-2xl border border-cyan-200 bg-white px-3 py-3">
+              <Text className="text-xs font-semibold text-cyan-800">
+                Astuce: garde un premier rappel court (30 min) pour etre prevenu rapidement.
+              </Text>
+            </View>
+            <TouchableOpacity
+              className="mt-4 rounded-2xl bg-cyan-700 px-4 py-3"
+              onPress={() => setShowGuideHint(false)}
+            >
+              <Text className="text-center text-sm font-semibold text-white">Compris</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

@@ -5,18 +5,24 @@ import { Linking, Platform, ScrollView, Text, TouchableOpacity, View } from "rea
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
+import * as Battery from "expo-battery";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
-import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/routing";
-import { getSessionById, listSessionContacts, setSessionLiveShare } from "../../src/lib/db";
-import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/liveShare";
-import { supabase } from "../../src/lib/supabase";
+import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/trips/routing";
+import { getSessionById, listSessionContacts, setSessionLiveShare } from "../../src/lib/core/db";
+import { buildFriendViewLink, createLiveShareToken } from "../../src/lib/trips/liveShare";
+import { supabase } from "../../src/lib/core/supabase";
 import { startBackgroundTracking, stopBackgroundTracking } from "../../src/services/backgroundLocation";
-import { getPremium } from "../../src/lib/premium";
-import { buildSmsUrl, buildSosMessage } from "../../src/lib/sos";
-import { clearActiveSessionId, setActiveSessionId } from "../../src/lib/activeSession";
-import { syncSafeBackHomeWidget } from "../../src/lib/androidHomeWidget";
-import { sendArrivalSignalToGuardians } from "../../src/lib/messagingDb";
-import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/predefinedMessage";
+import { getPremium } from "../../src/lib/subscription/premium";
+import { buildSmsUrl, buildSosMessage } from "../../src/lib/safety/sos";
+import { clearActiveSessionId, setActiveSessionId } from "../../src/lib/trips/activeSession";
+import { syncSafeBackHomeWidget } from "../../src/lib/home/androidHomeWidget";
+import {
+  sendArrivalSignalToGuardians,
+  sendLowBatterySignalToGuardians,
+  sendSosSignalToGuardians
+} from "../../src/lib/social/messagingDb";
+import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/contacts/predefinedMessage";
+import { logPrivacyEvent } from "../../src/lib/privacy/privacyCenter";
 
 function formatTime(value?: string | null) {
   if (!value) return "";
@@ -88,6 +94,8 @@ export default function TrackingScreen() {
   const [sosSending, setSosSending] = useState(false);
   const [sosError, setSosError] = useState<string | null>(null);
   const [sosInfo, setSosInfo] = useState<string | null>(null);
+  const [batteryLevelPercent, setBatteryLevelPercent] = useState<number | null>(null);
+  const [lowBatteryAlertSent, setLowBatteryAlertSent] = useState(false);
   const hasGoogleKey = Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
   const routeMode = useMemo<RouteMode>(() => mode ?? "walking", [mode]);
@@ -174,6 +182,10 @@ export default function TrackingScreen() {
   }, [session?.id]);
 
   useEffect(() => {
+    setLowBatteryAlertSent(false);
+  }, [session?.id]);
+
+  useEffect(() => {
     if (!session) {
       setRouteResult(null);
       return;
@@ -194,6 +206,51 @@ export default function TrackingScreen() {
       }
     })();
   }, [session, routeMode, hasGoogleKey]);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    if (!session?.id || arrivalConfirmed) return;
+
+    const checkBattery = async () => {
+      try {
+        const level = await Battery.getBatteryLevelAsync();
+        if (!Number.isFinite(level)) return;
+        const percent = Math.round(level * 100);
+        setBatteryLevelPercent(percent);
+
+        if (percent <= 20 && !lowBatteryAlertSent) {
+          const dispatch = await sendLowBatterySignalToGuardians({
+            sessionId: session.id,
+            batteryLevelPercent: percent
+          });
+          setLowBatteryAlertSent(true);
+          if (dispatch.conversations > 0) {
+            setArrivalMessage(
+              `Batterie faible (${percent}%). ${dispatch.conversations} garant(s) prevenu(s).`
+            );
+          }
+          await logPrivacyEvent({
+            type: "battery_alert_shared",
+            message: "Alerte batterie faible partagee avec les garants.",
+            data: {
+              session_id: session.id,
+              battery_level_percent: percent,
+              guardians_notified: dispatch.conversations
+            }
+          });
+        }
+      } catch {
+        // no-op : les API batterie sont en mode best-effort uniquement.
+      }
+    };
+
+    checkBattery();
+    interval = setInterval(checkBattery, 60000);
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [session?.id, arrivalConfirmed, lowBatteryAlertSent]);
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
@@ -225,6 +282,13 @@ export default function TrackingScreen() {
           sessionId: session.id,
           enabled: true,
           shareToken: token
+        });
+        await logPrivacyEvent({
+          type: "share_enabled",
+          message: "Partage live active depuis l'ecran de suivi.",
+          data: {
+            session_id: session.id
+          }
         });
         await startBackgroundTracking(session.id);
         setBackgroundOn(true);
@@ -267,7 +331,7 @@ export default function TrackingScreen() {
             setCoords(latestCoords);
           }
         } catch {
-          // keep unknown location fallback in SOS message
+          // Garde un message de secours si la position reste inconnue dans le SOS.
         }
       }
 
@@ -304,7 +368,23 @@ export default function TrackingScreen() {
       }
 
       await Linking.openURL(smsUrl);
-      setSosInfo(`Alerte SOS prete pour ${recipients.length} proche(s). Verifie puis envoie.`);
+      let guardianConversations = 0;
+      try {
+        const guardianResult = await sendSosSignalToGuardians({
+          sessionId: session.id,
+          body
+        });
+        guardianConversations = guardianResult.conversations;
+      } catch {
+        guardianConversations = 0;
+      }
+      if (guardianConversations > 0) {
+        setSosInfo(
+          `Alerte SOS prete pour ${recipients.length} proche(s). ${guardianConversations} garant(s) notifie(s) dans l'app. Verifie puis envoie.`
+        );
+      } else {
+        setSosInfo(`Alerte SOS prete pour ${recipients.length} proche(s). Verifie puis envoie.`);
+      }
     } catch (error: any) {
       setSosError(error?.message ?? "Echec de preparation de l alerte SOS.");
     } finally {
@@ -460,6 +540,15 @@ export default function TrackingScreen() {
           <Text className="mt-2 text-base font-semibold text-slate-800">
             {coords ? `${coords.lat.toFixed(5)}, ${coords.lon.toFixed(5)}` : "Recherche..."}
           </Text>
+          <Text className="mt-3 text-xs uppercase tracking-widest text-slate-500">Batterie</Text>
+          <Text className="mt-2 text-base font-semibold text-slate-800">
+            {batteryLevelPercent == null ? "Inconnue" : `${batteryLevelPercent}%`}
+          </Text>
+          {batteryLevelPercent != null && batteryLevelPercent <= 20 ? (
+            <Text className="mt-2 text-xs text-rose-700">
+              Batterie faible: alerte proactive possible vers les garants.
+            </Text>
+          ) : null}
         </View>
 
         <View className="mt-6 rounded-3xl border border-rose-200 bg-rose-50/90 p-5 shadow-sm">
@@ -497,6 +586,33 @@ export default function TrackingScreen() {
 
           {sosError ? <Text className="mt-3 text-sm text-red-700">{sosError}</Text> : null}
           {sosInfo ? <Text className="mt-3 text-sm text-rose-800">{sosInfo}</Text> : null}
+          <TouchableOpacity
+            className="mt-3 rounded-2xl border border-rose-200 bg-white px-4 py-3"
+            onPress={() => {
+              if (!session) return;
+              const draftBody = buildSosMessage({
+                fromAddress: session.from_address,
+                toAddress: session.to_address,
+                coords: coords ? { lat: coords.lat, lon: coords.lon } : null
+              });
+              router.push({
+                pathname: "/incident-report",
+                params: {
+                  sessionId: session.id,
+                  from: session.from_address,
+                  to: session.to_address,
+                  lat: coords ? String(coords.lat) : undefined,
+                  lon: coords ? String(coords.lon) : undefined,
+                  details: draftBody
+                }
+              });
+            }}
+            disabled={!session}
+          >
+            <Text className="text-center text-sm font-semibold text-rose-800">
+              Rédiger un rapport incident
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -559,6 +675,13 @@ export default function TrackingScreen() {
                       enabled: true,
                       shareToken: activeShareToken ?? createLiveShareToken()
                     });
+                    await logPrivacyEvent({
+                      type: "share_enabled",
+                      message: "Partage live active manuellement.",
+                      data: {
+                        session_id: session.id
+                      }
+                    });
                   }
                   await startBackgroundTracking(session.id);
                   setBackgroundOn(true);
@@ -582,6 +705,13 @@ export default function TrackingScreen() {
                 await stopBackgroundTracking();
                 if (session?.id && liveSharingRequested) {
                   await setSessionLiveShare({ sessionId: session.id, enabled: false, shareToken: null });
+                  await logPrivacyEvent({
+                    type: "share_disabled",
+                    message: "Partage live desactive manuellement.",
+                    data: {
+                      session_id: session.id
+                    }
+                  });
                 }
                 setBackgroundOn(false);
                 setArrivalMessage("Partage de position desactive manuellement.");
@@ -608,6 +738,13 @@ export default function TrackingScreen() {
                       enabled: false,
                       shareToken: null
                     });
+                    await logPrivacyEvent({
+                      type: "share_disabled",
+                      message: "Partage live desactive a l'arrivee.",
+                      data: {
+                        session_id: session.id
+                      }
+                    });
                   }
                   setBackgroundOn(false);
                   arrivalNotice = "Arrivee confirmee. Le partage de position a ete arrete.";
@@ -617,6 +754,13 @@ export default function TrackingScreen() {
                       sessionId: session.id,
                       enabled: false,
                       shareToken: null
+                    });
+                    await logPrivacyEvent({
+                      type: "share_disabled",
+                      message: "Partage live confirme inactif a l'arrivee.",
+                      data: {
+                        session_id: session.id
+                      }
                     });
                   }
                   arrivalNotice = "Arrivee confirmee. Le partage etait deja inactif.";
@@ -643,7 +787,7 @@ export default function TrackingScreen() {
                     updatedAtIso: new Date().toISOString()
                   });
                 } catch {
-                  // no-op: widget sync must not block arrival confirmation
+                  // no-op : la synchro du widget ne doit pas bloquer la confirmation d'arrivée.
                 }
                 setArrivalConfirmed(true);
                 setArrivalMessage(arrivalNotice);
@@ -669,4 +813,3 @@ export default function TrackingScreen() {
     </SafeAreaView>
   );
 }
-

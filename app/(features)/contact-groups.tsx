@@ -1,3 +1,4 @@
+// Écran de configuration des profils de notification par groupe de contacts.
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
@@ -11,9 +12,9 @@ import {
   getContactGroupProfiles,
   resetContactGroupProfiles,
   setContactGroupProfiles
-} from "../../src/lib/contactGroups";
-import type { NotifyMode } from "../../src/lib/notifyChannels";
-import { supabase } from "../../src/lib/supabase";
+} from "../../src/lib/contacts/contactGroups";
+import type { NotifyMode } from "../../src/lib/contacts/notifyChannels";
+import { supabase } from "../../src/lib/core/supabase";
 
 const NOTIFY_MODES: Array<{ key: NotifyMode; label: string }> = [
   { key: "auto", label: "Auto" },

@@ -1,10 +1,15 @@
+// Écran historique des trajets avec timeline sécurité et score de fiabilité.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { deleteAllSessions, deleteSession, listSessions } from "../../src/lib/db";
-import { supabase } from "../../src/lib/supabase";
+import { Ionicons } from "@expo/vector-icons";
+import { deleteAllSessions, deleteSession, listSessions } from "../../src/lib/core/db";
+import { listSecurityTimelineEvents, type SecurityTimelineEvent } from "../../src/lib/social/messagingDb";
+import { getReliabilityScore, type ReliabilityScore } from "../../src/lib/trips/reliabilityScore";
+import { filterTripSessionsByQuery, getTimelineBadge } from "../../src/lib/trips/tripsUi";
+import { supabase } from "../../src/lib/core/supabase";
 
 type SessionItem = {
   id: string;
@@ -28,10 +33,13 @@ export default function TripsScreen() {
   const [checking, setChecking] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [timeline, setTimeline] = useState<SecurityTimelineEvent[]>([]);
+  const [reliability, setReliability] = useState<ReliabilityScore | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [query, setQuery] = useState("");
   const [deletingAll, setDeletingAll] = useState(false);
+  const [activePanel, setActivePanel] = useState<"timeline" | "sessions">("timeline");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -51,8 +59,14 @@ export default function TripsScreen() {
     (async () => {
       try {
         setLoading(true);
-        const data = await listSessions();
+        const [data, timelineEvents, reliabilityScore] = await Promise.all([
+          listSessions(),
+          listSecurityTimelineEvents(120),
+          getReliabilityScore()
+        ]);
         setSessions(data as SessionItem[]);
+        setTimeline(timelineEvents);
+        setReliability(reliabilityScore);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement.");
       } finally {
@@ -66,13 +80,7 @@ export default function TripsScreen() {
   }
 
   const filteredSessions = useMemo(() => {
-    const value = query.trim().toLowerCase();
-    if (!value) return sessions;
-    return sessions.filter((session) => {
-      const from = String(session.from_address ?? "").toLowerCase();
-      const to = String(session.to_address ?? "").toLowerCase();
-      return from.includes(value) || to.includes(value);
-    });
+    return filterTripSessionsByQuery(sessions, query);
   }, [sessions, query]);
 
   return (
@@ -103,12 +111,107 @@ export default function TripsScreen() {
         </View>
         <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Mes trajets</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Supprime les anciens trajets pour garder ta base propre.
+          Timeline sécurité et historique de tes trajets, sans te perdre dans les actions.
         </Text>
 
-        {loading ? (
+        <View className="mt-4 rounded-2xl border border-[#E7E0D7] bg-white/80 p-2">
+          <View className="flex-row gap-2">
+            <TouchableOpacity
+              className={`flex-1 rounded-xl px-3 py-2 ${activePanel === "timeline" ? "bg-[#111827]" : "bg-white"}`}
+              onPress={() => setActivePanel("timeline")}
+            >
+              <Text
+                className={`text-center text-xs font-semibold uppercase tracking-wider ${
+                  activePanel === "timeline" ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Timeline
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`flex-1 rounded-xl px-3 py-2 ${activePanel === "sessions" ? "bg-[#111827]" : "bg-white"}`}
+              onPress={() => setActivePanel("sessions")}
+            >
+              <Text
+                className={`text-center text-xs font-semibold uppercase tracking-wider ${
+                  activePanel === "sessions" ? "text-white" : "text-slate-700"
+                }`}
+              >
+                Mes trajets
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {reliability ? (
+          <View className="mt-6 rounded-3xl bg-[#111827] px-5 py-5 shadow-sm">
+            <Text className="text-xs uppercase tracking-widest text-slate-300">Score fiabilite</Text>
+            <Text className="mt-2 text-4xl font-extrabold text-white">{reliability.score}/100</Text>
+            <Text className="mt-2 text-sm text-slate-300">
+              Niveau:{" "}
+              {reliability.level === "excellent"
+                ? "Excellent"
+                : reliability.level === "good"
+                  ? "Bon"
+                  : reliability.level === "fragile"
+                    ? "Fragile"
+                    : "Critique"}
+            </Text>
+            <Text className="mt-3 text-xs uppercase tracking-widest text-slate-400">
+              Recommandations
+            </Text>
+            {reliability.recommendations.slice(0, 3).map((item, index) => (
+              <Text key={`reco-${index}`} className="mt-2 text-sm text-slate-200">
+                - {item}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+
+        {activePanel === "timeline" ? (
+          <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-xs uppercase tracking-widest text-slate-500">Timeline sécurité</Text>
+              <TouchableOpacity onPress={() => setActivePanel("sessions")}>
+                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Voir trajets
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {loading ? (
+              <Text className="mt-3 text-sm text-slate-500">Chargement...</Text>
+            ) : timeline.length === 0 ? (
+              <Text className="mt-3 text-sm text-slate-500">
+                Aucun évènement de sécurité pour le moment.
+              </Text>
+            ) : (
+              timeline.slice(0, 20).map((event) => {
+                const style = getTimelineBadge(event.type);
+                return (
+                  <View
+                    key={event.id}
+                    className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"
+                  >
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-sm font-semibold text-slate-800">{event.title}</Text>
+                      <View className={`rounded-full px-2 py-1 ${style.badgeClass}`}>
+                        <Text className="text-[10px] font-semibold uppercase tracking-wider">
+                          {style.badge}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text className="mt-1 text-sm text-slate-600">{event.body}</Text>
+                    <Text className="mt-2 text-xs text-slate-500">{formatDate(event.created_at)}</Text>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        ) : null}
+
+        {activePanel === "sessions" && loading ? (
           <Text className="mt-6 text-sm text-slate-500">Chargement...</Text>
-        ) : sessions.length === 0 ? (
+        ) : activePanel === "sessions" && sessions.length === 0 ? (
           <View className="mt-10 items-center justify-center rounded-3xl border border-[#E7E0D7] bg-white/90 p-6 shadow-sm">
             <Text className="text-base font-semibold text-slate-800">
               Aucun trajet pour l instant
@@ -135,7 +238,7 @@ export default function TripsScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        ) : (
+        ) : activePanel === "sessions" ? (
           <View className="mt-6">
             <TouchableOpacity
               className={`mb-4 rounded-2xl px-4 py-3 ${
@@ -206,7 +309,10 @@ export default function TripsScreen() {
                       })
                     }
                   >
-                    <Text className="text-center text-sm font-semibold text-white">Relancer</Text>
+                    <View className="flex-row items-center justify-center">
+                      <Ionicons name="repeat-outline" size={16} color="#fff" />
+                      <Text className="ml-2 text-center text-sm font-semibold text-white">Relancer ce trajet</Text>
+                    </View>
                   </TouchableOpacity>
                   <TouchableOpacity
                     className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -217,9 +323,10 @@ export default function TripsScreen() {
                       })
                     }
                   >
-                    <Text className="text-center text-sm font-semibold text-slate-700">
-                      Suivre
-                    </Text>
+                    <View className="flex-row items-center justify-center">
+                      <Ionicons name="map-outline" size={16} color="#334155" />
+                      <Text className="ml-2 text-center text-sm font-semibold text-slate-700">Ouvrir le suivi</Text>
+                    </View>
                   </TouchableOpacity>
                 </View>
                 <TouchableOpacity
@@ -240,7 +347,7 @@ export default function TripsScreen() {
               </View>
             ))}
           </View>
-        )}
+        ) : null}
 
         {errorMessage ? (
           <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
@@ -249,4 +356,3 @@ export default function TripsScreen() {
     </SafeAreaView>
   );
 }
-

@@ -2,10 +2,21 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useRouter } from "expo-router";
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { upsertProfile } from "../../src/lib/db";
-import { supabase } from "../../src/lib/supabase";
+import { signUpAndMaybeCreateProfile } from "../../src/lib/auth/authFlows";
+import { toSignupErrorFr, type SignupErrorUi } from "../../src/lib/auth/authErrorFr";
+import { supabase } from "../../src/lib/core/supabase";
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -26,7 +37,7 @@ export default function SignupScreen() {
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [signupError, setSignupError] = useState<SignupErrorUi | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -52,28 +63,24 @@ export default function SignupScreen() {
   const submit = async () => {
     if (!canSubmit) return;
     try {
+      Keyboard.dismiss();
       setSaving(true);
-      setErrorMessage("");
+      setSignupError(null);
 
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password
+      await signUpAndMaybeCreateProfile({
+        email,
+        password,
+        profile: {
+          username,
+          first_name: firstName,
+          last_name: lastName,
+          phone
+        }
       });
-      if (error) throw error;
-
-      if (data.user?.id) {
-        await upsertProfile({
-          user_id: data.user.id,
-          username: username.trim() || null,
-          first_name: firstName.trim() || null,
-          last_name: lastName.trim() || null,
-          phone: phone.trim() || null
-        });
-      }
 
       router.replace("/auth");
-    } catch (error: any) {
-      setErrorMessage(error?.message ?? "Erreur de creation de compte.");
+    } catch (error: unknown) {
+      setSignupError(toSignupErrorFr(error));
     } finally {
       setSaving(false);
     }
@@ -85,12 +92,18 @@ export default function SignupScreen() {
       <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
       <View className="absolute top-28 -left-24 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
       <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
-
-      <ScrollView
-        className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: 48 }}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {/* Permet de fermer le clavier en tapant hors des champs. */}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <ScrollView
+            className="flex-1 px-6"
+            contentContainerStyle={{ paddingBottom: 48 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
             className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
@@ -107,9 +120,9 @@ export default function SignupScreen() {
           </View>
         </View>
 
-        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Creer un compte</Text>
+        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Créer un compte</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Complete ton profil pour demarrer tes trajets en securite.
+          Complète ton profil pour démarrer tes trajets en sécurité.
         </Text>
 
         <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -159,11 +172,11 @@ export default function SignupScreen() {
           />
 
           <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
-            Prenom (facultatif)
+            Prénom (facultatif)
           </Text>
           <TextInput
             className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
-            placeholder="Prenom"
+            placeholder="Prénom"
             placeholderTextColor="#94a3b8"
             value={firstName}
             onChangeText={setFirstName}
@@ -181,7 +194,7 @@ export default function SignupScreen() {
           />
 
           <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
-            Telephone (facultatif)
+            Téléphone (facultatif)
           </Text>
           <TextInput
             className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
@@ -190,10 +203,42 @@ export default function SignupScreen() {
             keyboardType="phone-pad"
             value={phone}
             onChangeText={(text) => setPhone(formatPhone(text))}
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
           />
 
-          {errorMessage ? (
-            <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text>
+          {signupError ? (
+            <View className="mt-4 overflow-hidden rounded-3xl border border-rose-200 bg-rose-50">
+              <View className="absolute left-0 top-0 h-full w-1.5 bg-rose-500" />
+              <View className="px-4 py-4">
+                <View className="flex-row items-center gap-3">
+                  <View className="h-10 w-10 items-center justify-center rounded-2xl border border-rose-200 bg-white">
+                    <Ionicons name="warning-outline" size={20} color="#be123c" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-semibold uppercase tracking-[2px] text-rose-600">
+                      Inscription
+                    </Text>
+                    <Text className="text-base font-extrabold text-rose-900">
+                      {signupError.title}
+                    </Text>
+                  </View>
+                </View>
+                <View className="mt-3 rounded-2xl border border-rose-200 bg-white/90 px-3 py-3">
+                  <Text className="text-sm font-semibold text-rose-900">
+                    {signupError.message}
+                  </Text>
+                  {signupError.hint ? (
+                    <Text className="mt-1 text-xs text-rose-700">{signupError.hint}</Text>
+                  ) : null}
+                </View>
+                {signupError.code ? (
+                  <Text className="mt-2 text-[11px] uppercase tracking-wider text-rose-500">
+                    Code: {signupError.code}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
           ) : null}
 
           <TouchableOpacity
@@ -204,13 +249,13 @@ export default function SignupScreen() {
             disabled={!canSubmit || saving}
           >
             <Text className="text-center text-sm font-semibold text-white">
-              {saving ? "Creation..." : "Creer mon compte"}
+              {saving ? "Création..." : "Créer mon compte"}
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-
