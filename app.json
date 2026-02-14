@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "SafeBack",
+    "slug": "SafeBack",
+    "scheme": "safeback",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kyro31.SafeBack",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "SafeBack utilise le réseau local pour valider ton Wi-Fi maison en arrivée automatique.",
+        "NSLocationWhenInUseUsageDescription": "SafeBack utilise ta position pour confirmer automatiquement ton arrivée."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.kyro31.SafeBack"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-quick-actions",
+      "react-native-wifi-reborn",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "SafeBackHomeWidget",
+              "label": "SafeBack rapide",
+              "description": "Trajet, SOS et confirmation \"bien rentre\" en 1 clic",
+              "minWidth": "250dp",
+              "minHeight": "120dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "previewImage": "./assets/adaptive-icon.png"
+            }
+          ]
+        }
+      ]
+    ]
+  }
+}
