@@ -1,0 +1,31 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  MAESTRO_FRIEND_PUBLIC_ID: ${MAESTRO_FRIEND_PUBLIC_ID}
+---
+# Optionnel: envoie une demande d'ami via ID public.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- openLink: "safeback:///friends"
+- extendedWaitUntil:
+    visible:
+      id: friends-search-input
+    timeout: 30000
+- tapOn:
+    id: friends-search-input
+- eraseText
+- inputText: ${MAESTRO_FRIEND_PUBLIC_ID}
+- hideKeyboard
+- tapOn:
+    id: friends-search-button
+- extendedWaitUntil:
+    visible:
+      id: friends-send-request-0
+    timeout: 20000
+- tapOn:
+    id: friends-send-request-0
+- runFlow:
+    when:
+      visible: "Envoyer"
+    commands:
+      - tapOn: "Envoyer"

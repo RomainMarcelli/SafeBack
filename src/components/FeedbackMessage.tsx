@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Text, View } from "react-native";
+import { useAppAccessibility } from "./AppAccessibilityProvider";
+import { textStyleFromScale } from "../theme/designSystem";
 
 type FeedbackKind = "error" | "success" | "info";
 
@@ -13,6 +15,7 @@ export function FeedbackMessage(props: {
   durationMs?: number;
 }) {
   const { kind, message, compact = false, mode = "toast", durationMs = 3000 } = props;
+  const { preferences } = useAppAccessibility();
   const normalizedMessage = String(message ?? "").trim();
   const [visible, setVisible] = useState(Boolean(normalizedMessage));
 
@@ -39,8 +42,8 @@ export function FeedbackMessage(props: {
   const palette =
     kind === "error"
       ? {
-          border: "border-rose-200",
-          background: "bg-rose-50",
+          border: preferences.highContrast ? "border-rose-700" : "border-rose-200",
+          background: preferences.highContrast ? "bg-rose-100" : "bg-rose-50",
           accent: "bg-rose-500",
           iconBg: "bg-white border-rose-200",
           iconColor: "#BE123C",
@@ -50,8 +53,8 @@ export function FeedbackMessage(props: {
         }
       : kind === "success"
         ? {
-            border: "border-emerald-200",
-            background: "bg-emerald-50",
+            border: preferences.highContrast ? "border-emerald-700" : "border-emerald-200",
+            background: preferences.highContrast ? "bg-emerald-100" : "bg-emerald-50",
             accent: "bg-emerald-500",
             iconBg: "bg-white border-emerald-200",
             iconColor: "#047857",
@@ -60,8 +63,8 @@ export function FeedbackMessage(props: {
             textColor: "text-emerald-900"
           }
         : {
-            border: "border-cyan-200",
-            background: "bg-cyan-50",
+            border: preferences.highContrast ? "border-cyan-700" : "border-cyan-200",
+            background: preferences.highContrast ? "bg-cyan-100" : "bg-cyan-50",
             accent: "bg-cyan-500",
             iconBg: "bg-white border-cyan-200",
             iconColor: "#0E7490",
@@ -76,6 +79,10 @@ export function FeedbackMessage(props: {
   return (
     <View
       pointerEvents="none"
+      accessible
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      accessibilityLabel={`${palette.title}. ${normalizedMessage}`}
       className={`${
         mode === "toast"
           ? "absolute left-4 right-4 top-3 z-50"
@@ -93,7 +100,12 @@ export function FeedbackMessage(props: {
           <Text className={`text-[10px] font-semibold uppercase tracking-[2px] ${palette.titleColor}`}>
             {palette.title}
           </Text>
-          <Text className={`mt-1 text-sm font-semibold ${palette.textColor}`}>{normalizedMessage}</Text>
+          <Text
+            className={`mt-1 font-semibold ${palette.textColor}`}
+            style={textStyleFromScale(preferences.textScale, 14)}
+          >
+            {normalizedMessage}
+          </Text>
         </View>
       </View>
     </View>

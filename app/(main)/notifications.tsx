@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -15,6 +15,8 @@ import {
 import { respondToFriendRequest } from "../../src/lib/social/friendsDb";
 import { supabase } from "../../src/lib/core/supabase";
 import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
 
 type NotificationPriority = "urgent" | "important" | "info";
 
@@ -346,12 +348,18 @@ export default function NotificationsScreen() {
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Inbox sécurité priorisée</Text>
           {loading ? (
-            <View className="mt-4 flex-row items-center">
-              <ActivityIndicator size="small" color="#334155" />
-              <Text className="ml-2 text-sm text-slate-600">Chargement...</Text>
+            <View className="mt-4 gap-2">
+              <SkeletonCard />
+              <SkeletonCard />
             </View>
           ) : filteredNotifications.length === 0 ? (
-            <Text className="mt-4 text-sm text-slate-500">Aucune notification pour le moment.</Text>
+            <View className="mt-4">
+              <PremiumEmptyState
+                title="Aucune notification"
+                description="Tout est calme. Les alertes de sécurité et messages apparaîtront ici."
+                icon="notifications-outline"
+              />
+            </View>
           ) : (
             filteredNotifications.map((item) => {
               const style = notificationStyle(item.notification_type);

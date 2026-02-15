@@ -8,17 +8,17 @@ describe("sos helpers", () => {
     expect(formatSosCoords(null)).toBe("position inconnue");
   });
 
-  it("builds SOS message with route and maps link", () => {
+  it("builds SOS message with current address and maps link", () => {
     const message = buildSosMessage({
       fromAddress: "Paris",
       toAddress: "Lyon",
+      currentAddress: "10 Rue de la Paix, Paris",
       coords: { lat: 48.8566, lon: 2.3522 },
       now: new Date("2026-02-12T10:30:00.000Z")
     });
 
-    expect(message).toContain("ALERTE SOS SafeBack");
-    expect(message).toContain("Trajet: Paris -> Lyon");
-    expect(message).toContain("Position: 48.85660, 2.35220");
+    expect(message).toContain("Je suis en danger.");
+    expect(message).toContain("Je suis ici : 10 Rue de la Paix, Paris.");
     expect(message).toContain("https://maps.google.com/?q=48.8566,2.3522");
   });
 

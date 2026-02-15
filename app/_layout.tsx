@@ -1,6 +1,6 @@
 import "../global.css";
 import { useEffect, useMemo, useState } from "react";
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import Constants from "expo-constants";
 import * as QuickActions from "expo-quick-actions";
 import { type RouterAction } from "expo-quick-actions/router";
@@ -9,9 +9,20 @@ import { enableFreeze, enableScreens } from "react-native-screens";
 import { startForgottenTripDetector } from "../src/services/forgottenTripDetector";
 import { startAutoCheckinDetector } from "../src/services/autoCheckinDetector";
 import { startFriendPresenceHeartbeat } from "../src/services/friendPresenceHeartbeat";
+import { startVolumeSosShortcut } from "../src/services/volumeSosShortcut";
 import { syncPendingTripLaunches } from "../src/lib/trips/offlineTripQueue";
 import { markNotificationRead, respondFriendWellbeingPing } from "../src/lib/social/messagingDb";
+import { markRouteVisited } from "../src/lib/home/discoveryProgress";
 import { supabase } from "../src/lib/core/supabase";
+import { isCurrentDeviceRevoked, upsertCurrentDeviceSession } from "../src/lib/security/deviceSessions";
+import { AppToastProvider } from "../src/components/AppToastProvider";
+import { AppAccessibilityProvider } from "../src/components/AppAccessibilityProvider";
+import {
+  captureRuntimeError,
+  installGlobalRuntimeErrorHandlers,
+  trackUxMetric
+} from "../src/lib/monitoring/runtimeMonitoring";
+import { flushMonitoringToSupabase } from "../src/lib/monitoring/runtimeMonitoringTransport";
 
 if (Constants.appOwnership === "expo") {
   enableScreens(false);
@@ -19,6 +30,7 @@ if (Constants.appOwnership === "expo") {
 }
 
 export default function RootLayout() {
+  const pathname = usePathname();
   const [pingPromptQueue, setPingPromptQueue] = useState<
     Array<{
       notificationId: string;
@@ -33,6 +45,37 @@ export default function RootLayout() {
     () => (pingPromptQueue.length > 0 ? pingPromptQueue[0] : null),
     [pingPromptQueue]
   );
+
+  useEffect(() => {
+    if (!pathname) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const userId = data.session?.user.id;
+        if (!userId || cancelled) return;
+        await markRouteVisited(userId, pathname);
+      } catch {
+        // no-op: le tracking de découverte ne doit jamais bloquer l'app.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    const uninstall = installGlobalRuntimeErrorHandlers();
+    trackUxMetric({
+      name: "app_opened",
+      context: "root_layout"
+    }).catch(() => {
+      // no-op
+    });
+    return () => {
+      uninstall();
+    };
+  }, []);
 
   useEffect(() => {
     let stopDetectors: Array<() => void> = [];
@@ -57,6 +100,12 @@ export default function RootLayout() {
         stoppers.push(stopForgotten);
       } catch (error) {
         console.log("[forgotten-trip] detector start error", error);
+        captureRuntimeError({
+          error,
+          context: "detector_forgotten_trip_start"
+        }).catch(() => {
+          // no-op
+        });
       }
       try {
         const stopAutoCheckin = await startAutoCheckinDetector({
@@ -65,6 +114,12 @@ export default function RootLayout() {
         stoppers.push(stopAutoCheckin);
       } catch (error) {
         console.log("[auto-checkin] detector start error", error);
+        captureRuntimeError({
+          error,
+          context: "detector_auto_checkin_start"
+        }).catch(() => {
+          // no-op
+        });
       }
       try {
         const stopPresenceHeartbeat = await startFriendPresenceHeartbeat({
@@ -73,6 +128,27 @@ export default function RootLayout() {
         stoppers.push(stopPresenceHeartbeat);
       } catch (error) {
         console.log("[friend-presence] heartbeat start error", error);
+        captureRuntimeError({
+          error,
+          context: "detector_friend_presence_start"
+        }).catch(() => {
+          // no-op
+        });
+      }
+      try {
+        const stopVolumeSosShortcut = await startVolumeSosShortcut({
+          onInfo: (message) => console.log(`[volume-sos] ${message}`),
+          onError: (error) => console.log("[volume-sos] start/runtime error", error)
+        });
+        stoppers.push(stopVolumeSosShortcut);
+      } catch (error) {
+        console.log("[volume-sos] shortcut start error", error);
+        captureRuntimeError({
+          error,
+          context: "detector_volume_sos_start"
+        }).catch(() => {
+          // no-op
+        });
       }
       if (cancelled) {
         for (const stop of stoppers) {
@@ -105,6 +181,76 @@ export default function RootLayout() {
       cancelled = true;
       listener.subscription.unsubscribe();
       ensureStopped();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const flush = async () => {
+      try {
+        await flushMonitoringToSupabase({
+          maxRuntimeErrors: 40,
+          maxUxMetrics: 80
+        });
+      } catch (error) {
+        if (cancelled) return;
+        console.log("[monitoring] flush error", error);
+      }
+    };
+
+    flush();
+    timer = setInterval(flush, 25000);
+
+    const { data: listener } = supabase.auth.onAuthStateChange(() => {
+      if (cancelled) return;
+      flush();
+    });
+
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const syncDevicePresence = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session?.user || cancelled) return;
+        await upsertCurrentDeviceSession();
+        const revoked = await isCurrentDeviceRevoked();
+        if (!revoked || cancelled) return;
+        await supabase.auth.signOut();
+        console.log("[security/device-session] current device revoked -> signOut");
+      } catch (error) {
+        console.log("[security/device-session] sync error", error);
+        captureRuntimeError({
+          error,
+          context: "device_session_sync"
+        }).catch(() => {
+          // no-op
+        });
+      }
+    };
+
+    syncDevicePresence();
+    interval = setInterval(syncDevicePresence, 45000);
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user || cancelled) return;
+      syncDevicePresence();
+    });
+
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+      if (interval) clearInterval(interval);
     };
   }, []);
 
@@ -288,65 +434,69 @@ export default function RootLayout() {
 
   // Navigateur racine : garantit un contexte de navigation stable pour toutes les routes enfants.
   return (
-    <View style={{ flex: 1 }}>
-      <Stack screenOptions={{ headerShown: false }} />
-      <Modal transparent visible={Boolean(activePingPrompt)} animationType="fade">
-        <View className="flex-1 items-center justify-center bg-black/50 px-6">
-          <View className="w-full rounded-3xl border border-[#E7E0D7] bg-white p-5 shadow-lg">
-            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
-              Demande instantanée
-            </Text>
-            <Text className="mt-2 text-xl font-extrabold text-[#0F172A]">
-              {activePingPrompt?.title ?? "Vérification d'arrivée"}
-            </Text>
-            <Text className="mt-2 text-sm text-slate-700">
-              {activePingPrompt?.body ??
-                "Un proche souhaite confirmer que tu es bien arrivé."}
-            </Text>
-
-            {pingPromptError ? (
-              <Text className="mt-3 text-sm text-rose-700">{pingPromptError}</Text>
-            ) : null}
-
-            <View className="mt-4 flex-row gap-2">
-              <TouchableOpacity
-                className={`flex-1 rounded-2xl px-4 py-3 ${
-                  pingPromptBusy ? "bg-slate-300" : "bg-emerald-600"
-                }`}
-                onPress={() => respondToActivePingPrompt(true)}
-                disabled={pingPromptBusy}
-              >
-                {pingPromptBusy ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text className="text-center text-sm font-semibold text-white">
-                    Oui, bien arrivé
-                  </Text>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                className={`flex-1 rounded-2xl px-4 py-3 ${
-                  pingPromptBusy ? "bg-slate-300" : "bg-rose-600"
-                }`}
-                onPress={() => respondToActivePingPrompt(false)}
-                disabled={pingPromptBusy}
-              >
-                <Text className="text-center text-sm font-semibold text-white">
-                  Non, pas encore
+    <AppAccessibilityProvider>
+      <AppToastProvider>
+        <View style={{ flex: 1 }}>
+          <Stack screenOptions={{ headerShown: false, animation: "fade_from_bottom" }} />
+          <Modal transparent visible={Boolean(activePingPrompt)} animationType="fade">
+            <View className="flex-1 items-center justify-center bg-black/50 px-6">
+              <View className="w-full rounded-3xl border border-[#E7E0D7] bg-white p-5 shadow-lg">
+                <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
+                  Demande instantanée
                 </Text>
-              </TouchableOpacity>
-            </View>
+                <Text className="mt-2 text-xl font-extrabold text-[#0F172A]">
+                  {activePingPrompt?.title ?? "Vérification d'arrivée"}
+                </Text>
+                <Text className="mt-2 text-sm text-slate-700">
+                  {activePingPrompt?.body ??
+                    "Un proche souhaite confirmer que tu es bien arrivé."}
+                </Text>
 
-            <TouchableOpacity
-              className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-              onPress={closeActivePingPrompt}
-              disabled={pingPromptBusy}
-            >
-              <Text className="text-center text-sm font-semibold text-slate-700">Plus tard</Text>
-            </TouchableOpacity>
-          </View>
+                {pingPromptError ? (
+                  <Text className="mt-3 text-sm text-rose-700">{pingPromptError}</Text>
+                ) : null}
+
+                <View className="mt-4 flex-row gap-2">
+                  <TouchableOpacity
+                    className={`flex-1 rounded-2xl px-4 py-3 ${
+                      pingPromptBusy ? "bg-slate-300" : "bg-emerald-600"
+                    }`}
+                    onPress={() => respondToActivePingPrompt(true)}
+                    disabled={pingPromptBusy}
+                  >
+                    {pingPromptBusy ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text className="text-center text-sm font-semibold text-white">
+                        Oui, bien arrivé
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`flex-1 rounded-2xl px-4 py-3 ${
+                      pingPromptBusy ? "bg-slate-300" : "bg-rose-600"
+                    }`}
+                    onPress={() => respondToActivePingPrompt(false)}
+                    disabled={pingPromptBusy}
+                  >
+                    <Text className="text-center text-sm font-semibold text-white">
+                      Non, pas encore
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                  onPress={closeActivePingPrompt}
+                  disabled={pingPromptBusy}
+                >
+                  <Text className="text-center text-sm font-semibold text-slate-700">Plus tard</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
         </View>
-      </Modal>
-    </View>
+      </AppToastProvider>
+    </AppAccessibilityProvider>
   );
 }

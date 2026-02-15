@@ -370,19 +370,21 @@ export default function FriendsScreen() {
       <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
-            className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
+            testID="friends-back-button"
+            className="h-9 rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
             <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Retour</Text>
           </TouchableOpacity>
-          <View className="flex-row gap-2">
+          <View className="flex-row items-center gap-2">
             <TouchableOpacity
-              className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
+              testID="friends-open-map-button"
+              className="h-9 justify-center rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
               onPress={() => router.push("/friends-map")}
             >
               <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Carte live</Text>
             </TouchableOpacity>
-            <View className="rounded-full bg-[#111827] px-3 py-1">
+            <View className="h-9 items-center justify-center rounded-full bg-[#111827] px-3">
               <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">Amis</Text>
             </View>
           </View>
@@ -457,6 +459,7 @@ export default function FriendsScreen() {
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Rechercher un profil</Text>
           <TextInput
+            testID="friends-search-input"
             className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -473,6 +476,7 @@ export default function FriendsScreen() {
             maxLength={120}
           />
           <TouchableOpacity
+            testID="friends-search-button"
             className={`mt-3 rounded-2xl px-4 py-3 ${
               searchQuery.trim().length > 0 && !searching ? "bg-[#111827]" : "bg-slate-300"
             }`}
@@ -486,7 +490,7 @@ export default function FriendsScreen() {
 
           {searchResults.length > 0 ? (
             <View className="mt-3">
-              {searchResults.map((profile) => {
+              {searchResults.map((profile, index) => {
                 const alreadyFriend = friendIds.has(profile.user_id);
                 const outgoingPending = outgoingTargetIds.has(profile.user_id);
                 const disabled = alreadyFriend || outgoingPending || busyAction === `send-${profile.user_id}`;
@@ -495,6 +499,7 @@ export default function FriendsScreen() {
                     <Text className="text-sm font-semibold text-slate-900">{profileLabel(profile)}</Text>
                     <Text className="mt-1 text-xs text-slate-500">ID {profile.public_id}</Text>
                     <TouchableOpacity
+                      testID={`friends-send-request-${index}`}
                       className={`mt-3 rounded-xl px-3 py-2 ${disabled ? "bg-slate-300" : "bg-[#0F766E]"}`}
                       onPress={() => sendRequest(profile.user_id)}
                       disabled={disabled}
@@ -599,6 +604,7 @@ export default function FriendsScreen() {
 
                   <View className="mt-3 flex-row gap-2">
                     <TouchableOpacity
+                      testID={`friends-chat-${friend.friend_user_id}`}
                       className={`flex-1 rounded-xl px-3 py-2 ${
                         busyAction === `chat-${friend.friend_user_id}` ? "bg-slate-300" : "bg-[#111827]"
                       }`}
@@ -608,6 +614,7 @@ export default function FriendsScreen() {
                       <Text className="text-center text-xs font-semibold text-white">Discuter</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
+                      testID={`friends-toggle-guardian-${friend.friend_user_id}`}
                       className={`flex-1 rounded-xl px-3 py-2 ${isGuardian ? "bg-amber-200" : "bg-[#0F766E]"}`}
                       onPress={() => toggleGuardian(friend.friend_user_id)}
                       disabled={Boolean(busyAction)}
@@ -619,6 +626,7 @@ export default function FriendsScreen() {
                   </View>
 
                   <TouchableOpacity
+                    testID={`friends-ping-arrival-${friend.friend_user_id}`}
                     className={`mt-2 rounded-xl px-3 py-2 ${
                       busyAction === `ping-${friend.friend_user_id}` ? "bg-slate-300" : "bg-[#0284C7]"
                     }`}
@@ -630,6 +638,7 @@ export default function FriendsScreen() {
 
                   {canAskForCheck ? (
                     <TouchableOpacity
+                      testID={`friends-request-check-${friend.friend_user_id}`}
                       className={`mt-2 rounded-xl px-3 py-2 ${
                         busyAction === `check-${friend.friend_user_id}` ? "bg-slate-300" : "bg-sky-600"
                       }`}

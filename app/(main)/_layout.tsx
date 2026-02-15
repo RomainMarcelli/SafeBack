@@ -12,6 +12,7 @@ import { supabase } from "../../src/lib/core/supabase";
 import { confirmAction } from "../../src/lib/privacy/confirmAction";
 import { PUSH_CONSENT_KEY } from "../../src/lib/privacy/privacyKeys";
 import { getUnreadNotificationsCount } from "../../src/lib/social/messagingDb";
+import { getProfile } from "../../src/lib/core/db";
 
 type TabItem = {
   key: string;
@@ -54,8 +55,14 @@ const TABS: TabItem[] = [
   }
 ];
 
-function TabButton(props: { item: TabItem; active: boolean; onPress: () => void }) {
-  const { item, active, onPress } = props;
+function TabButton(props: {
+  item: TabItem;
+  active: boolean;
+  onPress: () => void;
+  showOnlineDot?: boolean;
+  online?: boolean;
+}) {
+  const { item, active, onPress, showOnlineDot = false, online = false } = props;
   const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
 
   useEffect(() => {
@@ -84,11 +91,28 @@ function TabButton(props: { item: TabItem; active: boolean; onPress: () => void 
   return (
     <TouchableOpacity
       onPress={onPress}
+      testID={`tab-${item.key}`}
       style={{ flex: 1, alignItems: "center", paddingVertical: 6 }}
       accessibilityRole="button"
+      accessibilityLabel={`Onglet ${item.label}`}
     >
       <Animated.View style={{ alignItems: "center", transform: [{ scale }, { translateY }] }}>
-        <Ionicons name={active ? item.iconActive : item.icon} size={20} color={color} />
+        <View style={{ position: "relative" }}>
+          <Ionicons name={active ? item.iconActive : item.icon} size={20} color={color} />
+          {showOnlineDot ? (
+            <View
+              style={{
+                position: "absolute",
+                right: -4,
+                top: -2,
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: online ? "#16A34A" : "#DC2626"
+              }}
+            />
+          ) : null}
+        </View>
         {item.badgeCount && item.badgeCount > 0 ? (
           <View
             style={{
@@ -187,6 +211,10 @@ export default function MainLayout() {
 
   const ensurePushNotificationsConsent = async (): Promise<any> => {
     if (Constants.appOwnership === "expo") return null;
+    const profile = await getProfile().catch(() => null);
+    if (!profile?.consent_notifications) {
+      return null;
+    }
 
     const notificationsApi = await import("expo-notifications");
     const permission = await notificationsApi.getPermissionsAsync();
@@ -385,7 +413,7 @@ export default function MainLayout() {
   return (
     <View style={{ flex: 1 }}>
       {/* Garde un navigateur dédié au groupe "(main)" pour garantir le contexte de navigation des écrans enfants. */}
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }} />
       <View
         style={{
           borderTopWidth: 1,
@@ -409,6 +437,8 @@ export default function MainLayout() {
                 key={tab.key}
                 item={tab}
                 active={active}
+                showOnlineDot={tab.key === "account"}
+                online={online}
                 onPress={() => {
                   if (!active) {
                     router.push(tab.href);
@@ -427,6 +457,7 @@ export default function MainLayout() {
             }}
           >
             <TouchableOpacity
+              testID="notifications-fab"
               onPress={() => router.push("/notifications")}
               style={{
                 width: 44,
@@ -466,34 +497,6 @@ export default function MainLayout() {
             </TouchableOpacity>
           </View>
         ) : null}
-        <View
-          style={{
-            position: "absolute",
-            left: 14,
-            top: -34,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 10,
-            paddingVertical: 5,
-            borderRadius: 999,
-            borderWidth: 1,
-            borderColor: online ? "#86EFAC" : "#FCA5A5",
-            backgroundColor: "#FFFFFF"
-          }}
-        >
-          <View
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 4,
-              backgroundColor: online ? "#16A34A" : "#DC2626",
-              marginRight: 6
-            }}
-          />
-          <Text style={{ fontSize: 10, fontWeight: "700", color: online ? "#166534" : "#991B1B" }}>
-            {online ? "En ligne" : "Hors ligne"}
-          </Text>
-        </View>
       </View>
     </View>
   );

@@ -1,0 +1,16 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Réseau/map: ouverture carte live et recentrage.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- openLink: "safeback:///friends-map"
+- extendedWaitUntil:
+    visible:
+      id: friends-map-view
+    timeout: 30000
+- runFlow: "../helpers/accept-location-permission.yaml"
+- tapOn:
+    id: friends-map-recenter-button
+- assertVisible:
+    id: friends-map-refresh-button

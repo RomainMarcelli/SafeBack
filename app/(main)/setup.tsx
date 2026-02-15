@@ -222,8 +222,9 @@ function AddressInput(props: {
   value: string;
   onChange: (value: string) => void;
   onSelect: (value: string) => void;
+  inputTestID?: string;
 }) {
-  const { label, value, onChange, onSelect } = props;
+  const { label, value, onChange, onSelect, inputTestID } = props;
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -261,6 +262,7 @@ function AddressInput(props: {
         <Text className="text-xs uppercase tracking-widest text-slate-500">{label}</Text>
       ) : null}
       <TextInput
+        testID={inputTestID}
         className="mt-2 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-4 text-base text-slate-900"
         placeholder="Saisis une adresse"
         placeholderTextColor="#94a3b8"
@@ -1254,6 +1256,7 @@ export default function SetupScreen() {
                 value={fromAddress}
                 onChange={setFromAddress}
                 onSelect={setFromAddress}
+                inputTestID="setup-from-input"
               />
             )}
           </View>
@@ -1348,6 +1351,7 @@ export default function SetupScreen() {
                 value={toAddress}
                 onChange={setToAddress}
                 onSelect={setToAddress}
+                inputTestID="setup-to-input"
               />
             )}
 
@@ -1804,6 +1808,7 @@ export default function SetupScreen() {
 
         <Animated.View style={getRevealStyle(5)}>
           <TouchableOpacity
+            testID="setup-launch-trip-button"
             className={`mt-8 rounded-3xl px-6 py-5 shadow-lg ${
               canLaunch ? "bg-[#111827]" : "bg-slate-300"
             } ${guideFirstTripActive ? "border-2 border-cyan-300" : ""}`}
@@ -1868,6 +1873,7 @@ export default function SetupScreen() {
             </Text>
             <View className="mt-6 flex-row gap-3">
               <TouchableOpacity
+                testID="setup-launch-modal-close-button"
                 className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 onPress={() => setShowLaunchModal(false)}
               >
@@ -1877,6 +1883,7 @@ export default function SetupScreen() {
               </TouchableOpacity>
               {lastSessionId ? (
                 <TouchableOpacity
+                  testID="setup-open-tracking-button"
                   className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
                   onPress={() => {
                     setShowLaunchModal(false);

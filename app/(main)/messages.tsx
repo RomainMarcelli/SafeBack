@@ -3,14 +3,15 @@ import { Audio } from "expo-av";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import {
-  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
   ensureDirectConversation,
@@ -27,6 +28,8 @@ import { startVoiceRecording, stopVoiceRecording, uploadVoiceDraft, type VoiceDr
 import { supabase } from "../../src/lib/core/supabase";
 import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 import { getThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
+import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
 
 function formatTime(value?: string | null) {
   if (!value) return "--:--";
@@ -44,10 +47,12 @@ function formatDuration(ms?: number | null) {
 }
 
 function labelFromProfile(profile?: PublicProfile | null, fallbackId?: string | null) {
-  const username = String(profile?.username ?? "").trim();
-  if (username) return `@${username}`;
+  const firstName = String(profile?.first_name ?? "").trim();
+  if (firstName) return firstName;
   const fullName = `${String(profile?.first_name ?? "").trim()} ${String(profile?.last_name ?? "").trim()}`.trim();
   if (fullName) return fullName;
+  const username = String(profile?.username ?? "").trim();
+  if (username) return username;
   if (profile?.public_id) return `ID ${profile.public_id}`;
   if (!fallbackId) return "Conversation";
   return `ID ${fallbackId.slice(0, 8)}`;
@@ -139,6 +144,7 @@ function VoiceMessagePlayer(props: {
 
 export default function MessagesScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ conversationId?: string }>();
   const preferredConversationFromParams =
     typeof params.conversationId === "string" && params.conversationId.trim().length > 0
@@ -369,11 +375,12 @@ export default function MessagesScreen() {
       const draft = await stopVoiceRecording(recording);
       setRecording(null);
       setRecordingStartedAt(null);
-      if (draft.durationMs < 500) {
-        setErrorMessage("Vocal trop court. Maintiens un peu plus longtemps.");
+      if (draft.durationMs < 150) {
+        setErrorMessage("Vocal trop court. Réessaie en parlant un peu plus longtemps.");
         return;
       }
       setVoiceDraft(draft);
+      setSuccessMessage("Vocal prêt à être envoyé.");
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Impossible de finaliser l'enregistrement.");
     } finally {
@@ -436,6 +443,12 @@ export default function MessagesScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkMode ? "#0B1220" : "#F7F2EA" }}>
       <StatusBar style={darkMode ? "light" : "dark"} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        // Le footer personnalisé occupe de la place: on augmente l'offset pour garder le champ visible.
+        keyboardVerticalOffset={Platform.OS === "ios" ? insets.bottom + 106 : 0}
+      >
       <View className="flex-1 px-4 pb-4">
         <View className="mt-4 flex-row items-center justify-between">
           <View>
@@ -469,19 +482,18 @@ export default function MessagesScreen() {
 
         <View className="mt-3 rounded-2xl border border-[#E7E0D7] bg-white/90 px-3 py-3">
           {loading ? (
-            <View className="flex-row items-center py-1">
-              <ActivityIndicator size="small" color="#334155" />
-              <Text className="ml-2 text-sm text-slate-600">Chargement des conversations...</Text>
+            <View className="gap-2 py-1">
+              <SkeletonCard />
             </View>
           ) : conversationItems.length === 0 ? (
             <View className="py-1">
-              <Text className="text-sm text-slate-600">Aucune conversation. Commence depuis la page Amis.</Text>
-              <TouchableOpacity
-                className="mt-2 self-start rounded-full bg-[#111827] px-4 py-2"
-                onPress={openConversationFromFriendScreen}
-              >
-                <Text className="text-xs font-semibold uppercase tracking-widest text-white">Ouvrir mes amis</Text>
-              </TouchableOpacity>
+              <PremiumEmptyState
+                title="Aucune conversation"
+                description="Commence depuis la page Amis pour ouvrir un fil de discussion."
+                icon="chatbubble-ellipses-outline"
+                actionLabel="Ouvrir mes amis"
+                onActionPress={openConversationFromFriendScreen}
+              />
             </View>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -526,25 +538,42 @@ export default function MessagesScreen() {
             onContentSizeChange={() => threadRef.current?.scrollToEnd({ animated: true })}
           >
             {!selectedConversationId ? (
-              <View className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                <Text className="text-sm text-slate-600">Choisis une conversation pour commencer.</Text>
-              </View>
+              <PremiumEmptyState
+                title="Choisis une conversation"
+                description="Sélectionne un fil en haut pour afficher les messages."
+                icon="chatbubble-outline"
+              />
             ) : messages.length === 0 ? (
-              <View className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                <Text className="text-sm text-slate-600">Aucun message pour le moment.</Text>
-              </View>
+              <PremiumEmptyState
+                title="Aucun message"
+                description="Envoie le premier message pour démarrer la discussion."
+                icon="paper-plane-outline"
+              />
             ) : (
               messages.map((message) => {
                 const mine = message.sender_user_id === userId;
                 const isVoice = message.message_type === "voice";
                 const isArrival = message.message_type === "arrival";
+                const eventType = String(
+                  (message.metadata as Record<string, unknown> | null)?.event_type ?? ""
+                );
+                const isSosMessage =
+                  eventType === "sos_alert" ||
+                  (message.message_type === "system" &&
+                    String(message.body ?? "").toLowerCase().includes("je suis en danger"));
 
                 return (
                   <View
                     key={message.id}
                     className={`mb-2 max-w-[88%] rounded-2xl px-3 py-2 ${
-                      isArrival
-                        ? "self-center border border-emerald-200 bg-emerald-50"
+                      isSosMessage
+                        ? mine
+                          ? "self-end bg-rose-600"
+                          : "self-start border border-rose-200 bg-rose-50"
+                        : isArrival
+                          ? mine
+                            ? "self-end bg-emerald-600"
+                            : "self-start border border-emerald-200 bg-emerald-50"
                         : mine
                           ? "self-end bg-[#111827]"
                           : "self-start border border-slate-200 bg-white"
@@ -552,10 +581,28 @@ export default function MessagesScreen() {
                   >
                     <Text
                       className={`text-[10px] font-semibold uppercase tracking-[1.5px] ${
-                        isArrival ? "text-emerald-700" : mine ? "text-slate-400" : "text-slate-500"
+                        isSosMessage
+                          ? mine
+                            ? "text-rose-100"
+                            : "text-rose-700"
+                          : isArrival
+                            ? mine
+                              ? "text-emerald-100"
+                              : "text-emerald-700"
+                            : mine
+                              ? "text-slate-400"
+                              : "text-slate-500"
                       }`}
                     >
-                      {isArrival ? "Arrivée" : isVoice ? "Vocal" : mine ? "Moi" : selectedConversationMeta?.label ?? "Proche"}
+                      {isSosMessage
+                        ? "SOS"
+                        : isArrival
+                          ? "Arrivée"
+                          : isVoice
+                            ? "Vocal"
+                            : mine
+                              ? "Moi"
+                              : selectedConversationMeta?.label ?? "Proche"}
                     </Text>
 
                     {isVoice && message.voice_url ? (
@@ -570,12 +617,36 @@ export default function MessagesScreen() {
                     ) : null}
 
                     {message.body ? (
-                      <Text className={`mt-2 text-sm ${mine ? "text-white" : isArrival ? "text-emerald-900" : "text-slate-700"}`}>
+                      <Text
+                        className={`mt-2 text-sm ${
+                          isSosMessage
+                            ? mine
+                              ? "text-white"
+                              : "text-rose-900"
+                            : isArrival
+                              ? mine
+                                ? "text-white"
+                                : "text-emerald-900"
+                              : mine
+                                ? "text-white"
+                                : "text-slate-700"
+                        }`}
+                      >
                         {message.body}
                       </Text>
                     ) : null}
 
-                    <Text className={`mt-2 text-[11px] ${mine ? "text-slate-400" : "text-slate-500"}`}>
+                    <Text
+                      className={`mt-2 text-[11px] ${
+                        isSosMessage
+                          ? mine
+                            ? "text-rose-100"
+                            : "text-rose-700"
+                          : mine
+                            ? "text-slate-400"
+                            : "text-slate-500"
+                      }`}
+                    >
                       {formatTime(message.created_at)}
                     </Text>
                   </View>
@@ -670,6 +741,7 @@ export default function MessagesScreen() {
         {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} compact /> : null}
         {successMessage ? <FeedbackMessage kind="success" message={successMessage} compact /> : null}
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

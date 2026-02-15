@@ -49,6 +49,7 @@ export default function QuickSosScreen() {
         const session = activeSessionId ? await getSessionById(activeSessionId) : null;
 
         let coords: { lat: number; lon: number } | null = null;
+        let currentAddress: string | null = null;
         try {
           const permission = await Location.requestForegroundPermissionsAsync();
           if (permission.status === "granted") {
@@ -59,6 +60,28 @@ export default function QuickSosScreen() {
               lat: position.coords.latitude,
               lon: position.coords.longitude
             };
+            try {
+              const reverse = await Location.reverseGeocodeAsync({
+                latitude: coords.lat,
+                longitude: coords.lon
+              });
+              const first = reverse[0];
+              if (first) {
+                currentAddress = [
+                  first.name,
+                  first.street,
+                  first.postalCode,
+                  first.city,
+                  first.region,
+                  first.country
+                ]
+                  .map((part) => String(part ?? "").trim())
+                  .filter((part) => part.length > 0)
+                  .join(", ");
+              }
+            } catch {
+              currentAddress = null;
+            }
           }
         } catch {
           coords = null;
@@ -69,6 +92,7 @@ export default function QuickSosScreen() {
         const body = buildSosMessage({
           fromAddress: from,
           toAddress: to,
+          currentAddress,
           coords: coords ? { lat: coords.lat, lon: coords.lon } : null
         });
 
@@ -134,10 +158,11 @@ export default function QuickSosScreen() {
           ) : errorMessage ? (
             <FeedbackMessage kind="error" message={errorMessage} />
           ) : (
-            <FeedbackMessage kind="info" message={message} />
+            <FeedbackMessage kind="error" message={message} />
           )}
 
           <TouchableOpacity
+            testID="quick-sos-back-home-button"
             className="mt-5 rounded-2xl bg-[#111827] px-4 py-3"
             onPress={() => {
               router.replace("/");
@@ -147,6 +172,7 @@ export default function QuickSosScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
+            testID="quick-sos-open-incident-button"
             className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3"
             onPress={() => {
               router.push({

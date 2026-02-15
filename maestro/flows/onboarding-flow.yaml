@@ -1,0 +1,17 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Onboarding: ouvre le guide express si la carte onboarding est visible.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- runFlow:
+    when:
+      visible:
+        id: home-open-express-assistant
+    commands:
+      - tapOn:
+          id: home-open-express-assistant
+      - assertVisible: "Guide de configuration"
+      - tapOn: "Fermer"
+- assertVisible:
+    id: home-open-setup-button

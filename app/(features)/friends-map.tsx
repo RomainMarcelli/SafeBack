@@ -1,5 +1,5 @@
 // Carte live des proches: partage optionnel, avatar emoji et statut en ligne/hors-ligne.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Redirect, useRouter } from "expo-router";
 import MapView, { Marker } from "react-native-maps";
@@ -43,6 +43,7 @@ function formatSeenAt(value?: string | null): string {
 
 export default function FriendsMapScreen() {
   const router = useRouter();
+  const mapRef = useRef<MapView | null>(null);
   const [checking, setChecking] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -181,7 +182,7 @@ export default function FriendsMapScreen() {
   const myPresence = userId ? friendPresenceMap.get(userId) : undefined;
 
   const mapRegion = useMemo(() => {
-    const first = visibleFriends[0]?.presence ?? myPresence;
+    const first = myPresence ?? visibleFriends[0]?.presence;
     const lat = typeof first?.latitude === "number" ? first.latitude : 48.8566;
     const lng = typeof first?.longitude === "number" ? first.longitude : 2.3522;
     return {
@@ -191,6 +192,20 @@ export default function FriendsMapScreen() {
       longitudeDelta: 0.06
     };
   }, [visibleFriends, myPresence]);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (typeof myPresence?.latitude !== "number" || typeof myPresence?.longitude !== "number") return;
+    mapRef.current.animateToRegion(
+      {
+        latitude: Number(myPresence.latitude),
+        longitude: Number(myPresence.longitude),
+        latitudeDelta: 0.03,
+        longitudeDelta: 0.03
+      },
+      450
+    );
+  }, [myPresence?.latitude, myPresence?.longitude]);
 
   const saveMapSettings = async (next: { shareEnabled?: boolean; markerEmoji?: string }) => {
     try {
@@ -233,12 +248,14 @@ export default function FriendsMapScreen() {
       <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
+            testID="friends-map-back-button"
             className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
             <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Retour</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="friends-map-open-network-button"
             className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.push("/friends")}
           >
@@ -262,6 +279,7 @@ export default function FriendsMapScreen() {
               </Text>
             </View>
             <Switch
+              testID="friends-map-share-switch"
               value={shareEnabled}
               onValueChange={async (value) => {
                 const confirmed = await confirmAction({
@@ -304,6 +322,7 @@ export default function FriendsMapScreen() {
           </View>
 
           <TouchableOpacity
+            testID="friends-map-refresh-button"
             className={`mt-4 rounded-2xl px-4 py-3 ${shareEnabled ? "bg-[#0F766E]" : "bg-slate-300"}`}
             onPress={async () => {
               try {
@@ -334,7 +353,7 @@ export default function FriendsMapScreen() {
               <Text className="mt-2 text-sm text-slate-600">Chargement de la carte...</Text>
             </View>
           ) : (
-            <MapView style={{ flex: 1 }} initialRegion={mapRegion}>
+            <MapView testID="friends-map-view" ref={mapRef} style={{ flex: 1 }} initialRegion={mapRegion}>
               {visibleFriends.map(({ friend, presence }) => (
                 <Marker
                   key={`friend-${friend.friend_user_id}`}
@@ -373,6 +392,28 @@ export default function FriendsMapScreen() {
               ) : null}
             </MapView>
           )}
+          <TouchableOpacity
+            testID="friends-map-recenter-button"
+            className="absolute bottom-3 right-3 h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white/95"
+            onPress={() => {
+              if (!mapRef.current) return;
+              if (typeof myPresence?.latitude === "number" && typeof myPresence?.longitude === "number") {
+                mapRef.current.animateToRegion(
+                  {
+                    latitude: Number(myPresence.latitude),
+                    longitude: Number(myPresence.longitude),
+                    latitudeDelta: 0.03,
+                    longitudeDelta: 0.03
+                  },
+                  350
+                );
+                return;
+              }
+              mapRef.current.animateToRegion(mapRegion, 350);
+            }}
+          >
+            <Ionicons name="locate" size={18} color="#0f172a" />
+          </TouchableOpacity>
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/95 p-5 shadow-sm">

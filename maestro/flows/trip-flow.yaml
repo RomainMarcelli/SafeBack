@@ -1,0 +1,37 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  MAESTRO_FROM_ADDRESS: ${MAESTRO_FROM_ADDRESS}
+  MAESTRO_TO_ADDRESS: ${MAESTRO_TO_ADDRESS}
+---
+# Trajet: saisie départ/arrivée puis lancement session.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- tapOn:
+    id: home-open-setup-button
+- extendedWaitUntil:
+    visible:
+      id: setup-from-input
+    timeout: 20000
+- tapOn:
+    id: setup-from-input
+- eraseText
+- inputText: ${MAESTRO_FROM_ADDRESS}
+- tapOn:
+    id: setup-to-input
+- eraseText
+- inputText: ${MAESTRO_TO_ADDRESS}
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: setup-launch-trip-button
+    direction: DOWN
+- tapOn:
+    id: setup-launch-trip-button
+- runFlow:
+    when:
+      visible:
+        id: setup-launch-modal-close-button
+    commands:
+      - tapOn:
+          id: setup-launch-modal-close-button

@@ -15,6 +15,8 @@ import { filterTripSessionsByQuery, getTimelineBadge } from "../../src/lib/trips
 import { supabase } from "../../src/lib/core/supabase";
 import { confirmAction, confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
 import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
 
 type SessionItem = {
   id: string;
@@ -208,11 +210,18 @@ export default function TripsScreen() {
               </TouchableOpacity>
             </View>
             {loading ? (
-              <Text className="mt-3 text-sm text-slate-500">Chargement...</Text>
+              <View className="mt-3 gap-2">
+                <SkeletonCard />
+                <SkeletonCard />
+              </View>
             ) : timeline.length === 0 ? (
-              <Text className="mt-3 text-sm text-slate-500">
-                Aucun évènement de sécurité pour le moment.
-              </Text>
+              <View className="mt-3">
+                <PremiumEmptyState
+                  title="Timeline vide"
+                  description="Aucun événement de sécurité pour le moment."
+                  icon="time-outline"
+                />
+              </View>
             ) : (
               timeline.slice(0, 20).map((event) => {
                 const style = getTimelineBadge(event.type);
@@ -239,33 +248,27 @@ export default function TripsScreen() {
         ) : null}
 
         {activePanel === "sessions" && loading ? (
-          <Text className="mt-6 text-sm text-slate-500">Chargement...</Text>
+          <View className="mt-6 gap-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
         ) : activePanel === "sessions" && sessions.length === 0 ? (
-          <View className="mt-10 items-center justify-center rounded-3xl border border-[#E7E0D7] bg-white/90 p-6 shadow-sm">
-            <Text className="text-base font-semibold text-slate-800">
-              Aucun trajet pour l instant
-            </Text>
-            <Text className="mt-2 text-center text-sm text-slate-600">
-              Tu veux en lancer un nouveau ?
-            </Text>
-            <View className="mt-5 w-full">
-              <TouchableOpacity
-                className="rounded-2xl bg-[#111827] px-4 py-3"
-                onPress={() => router.replace("/setup")}
-              >
-                <Text className="text-center text-sm font-semibold text-white">
-                  Creer un trajet
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                onPress={() => router.replace("/")}
-              >
-                <Text className="text-center text-sm font-semibold text-slate-700">
-                  Retour accueil
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View className="mt-6">
+            <PremiumEmptyState
+              title="Aucun trajet pour l'instant"
+              description="Lance ton premier trajet pour démarrer l'historique sécurité."
+              icon="navigate-outline"
+              actionLabel="Créer un trajet"
+              onActionPress={() => router.replace("/setup")}
+            />
+            <TouchableOpacity
+              className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.replace("/")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Retour accueil
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : activePanel === "sessions" ? (
           <View className="mt-6">
@@ -308,7 +311,11 @@ export default function TripsScreen() {
               onChangeText={setQuery}
             />
             {filteredSessions.length === 0 ? (
-              <Text className="text-sm text-slate-600">Aucun trajet ne correspond.</Text>
+              <PremiumEmptyState
+                title="Aucun trajet trouvé"
+                description="Essaie un autre mot-clé (départ, arrivée, date)."
+                icon="search-outline"
+              />
             ) : null}
             {filteredSessions.map((session) => (
               <View

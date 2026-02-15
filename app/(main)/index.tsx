@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Link, Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { Modal, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import {
+  Modal,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { clearActiveSessionId } from "../../src/lib/trips/activeSession";
@@ -35,6 +44,23 @@ import { getAutoCheckinConfig } from "../../src/lib/safety/autoCheckins";
 import { supabase } from "../../src/lib/core/supabase";
 import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 import { getThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
+import { useAppAccessibility } from "../../src/components/AppAccessibilityProvider";
+import { AnimatedCard } from "../../src/components/ui/AnimatedCard";
+import { AnimatedPressable } from "../../src/components/ui/AnimatedPressable";
+import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
+import {
+  getOnboardingTutorialSteps,
+  getTutorialGlobalProgressLabel,
+  getTutorialSectionStats
+} from "../../src/lib/home/onboardingTutorial";
+import {
+  hasVisitedRoute,
+  markTutorialStepCompleted,
+  setTutorialCurrentStepIndex,
+  syncTutorialCompletionFromVisitedRoutes,
+  type DiscoveryProgress
+} from "../../src/lib/home/discoveryProgress";
 
 type TutorialStep = {
   id: OnboardingStepId;
@@ -136,6 +162,7 @@ type OnboardingChecklist = {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { announce } = useAppAccessibility();
   const params = useLocalSearchParams<{ onboarding?: string; onboardingToken?: string }>();
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
@@ -143,6 +170,7 @@ export default function HomeScreen() {
   const [quickInfo, setQuickInfo] = useState("");
   const [quickError, setQuickError] = useState("");
   const [onboardingState, setOnboardingState] = useState<OnboardingState | null>(null);
+  const [discoveryProgress, setDiscoveryProgress] = useState<DiscoveryProgress | null>(null);
   const [onboardingChecklist, setOnboardingChecklist] = useState<OnboardingChecklist>({
     profile: false,
     favorites: false,
@@ -153,9 +181,14 @@ export default function HomeScreen() {
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [showOnboardingPrompt, setShowOnboardingPrompt] = useState(false);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
+  const [showFullTutorial, setShowFullTutorial] = useState(false);
   const [showHubModal, setShowHubModal] = useState(false);
+  const [hubSearchQuery, setHubSearchQuery] = useState("");
+  const [hubFilter, setHubFilter] = useState<"all" | "new" | "configured" | "todo">("all");
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [fullTutorialStepIndex, setFullTutorialStepIndex] = useState(0);
   const [guideActionBusy, setGuideActionBusy] = useState(false);
+  const hubSheetDragStartY = useRef<number | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
 
   useEffect(() => {
@@ -213,8 +246,116 @@ export default function HomeScreen() {
   const darkMode = themeMode === "dark";
   const currentStep = TUTORIAL_STEPS[tutorialStepIndex] ?? TUTORIAL_STEPS[0];
   const currentStepDone = isStepDone(currentStep.id);
-  const primaryHubItems = useMemo(() => getPrimaryHomeHubItems(4), []);
+  const fullTutorialSteps = useMemo(() => getOnboardingTutorialSteps(), []);
+  const fullTutorialStats = useMemo(
+    () => getTutorialSectionStats(fullTutorialSteps),
+    [fullTutorialSteps]
+  );
+  const totalFullTutorialSteps = fullTutorialSteps.length;
+  const completedFullTutorialStepIds = useMemo(
+    () => new Set(discoveryProgress?.tutorialCompletedStepIds ?? []),
+    [discoveryProgress?.tutorialCompletedStepIds]
+  );
+  const currentFullTutorialStep =
+    fullTutorialSteps[Math.max(0, Math.min(fullTutorialStepIndex, totalFullTutorialSteps - 1))] ??
+    null;
+  const currentFullTutorialStepDone = currentFullTutorialStep
+    ? completedFullTutorialStepIds.has(currentFullTutorialStep.id)
+    : false;
+  const fullTutorialCompletedCount = completedFullTutorialStepIds.size;
+  const fullTutorialProgressLabel = getTutorialGlobalProgressLabel(
+    fullTutorialStepIndex,
+    totalFullTutorialSteps
+  );
   const hubSections = useMemo(() => getHomeHubSections(), []);
+  const visitedRoutes = discoveryProgress?.visitedRoutes ?? [];
+  const isHubItemNew = (href: string) => !hasVisitedRoute(visitedRoutes, href);
+
+  const isHubItemConfigured = (item: HomeHubItem) => {
+    if (item.href === "/favorites") return onboardingChecklist.favorites;
+    if (item.href === "/setup") return onboardingChecklist.first_trip;
+    if (item.href === "/auto-checkins") return onboardingChecklist.auto_checkins;
+    if (item.href === "/friends-map") return onboardingState?.manualDone.includes("friends_map") ?? false;
+    if (item.href === "/guardian-dashboard") {
+      return onboardingState?.manualDone.includes("guardian_dashboard") ?? false;
+    }
+    if (item.href === "/safety-alerts") return onboardingState?.manualDone.includes("safety_review") ?? false;
+    return hasVisitedRoute(visitedRoutes, item.href);
+  };
+
+  const hubItemStatus = (item: HomeHubItem): "new" | "configured" | "todo" => {
+    if (isHubItemNew(item.href)) return "new";
+    return isHubItemConfigured(item) ? "configured" : "todo";
+  };
+
+  const filteredHubSections = useMemo(() => {
+    const query = hubSearchQuery.trim().toLowerCase();
+    return hubSections
+      .map((section) => {
+        const items = section.items.filter((item) => {
+          const haystack = `${item.title} ${item.subtitle}`.toLowerCase();
+          const matchesQuery = query.length === 0 || haystack.includes(query);
+          if (!matchesQuery) return false;
+          if (hubFilter === "all") return true;
+          return hubItemStatus(item) === hubFilter;
+        });
+        return {
+          ...section,
+          items
+        };
+      })
+      .filter((section) => section.items.length > 0);
+  }, [hubSections, hubSearchQuery, hubFilter, onboardingChecklist, onboardingState, visitedRoutes]);
+
+  const hubStatusCounts = useMemo(() => {
+    const counts = {
+      new: 0,
+      configured: 0,
+      todo: 0
+    };
+    for (const section of hubSections) {
+      for (const item of section.items) {
+        const status = hubItemStatus(item);
+        counts[status] += 1;
+      }
+    }
+    return counts;
+  }, [hubSections, onboardingChecklist, onboardingState, visitedRoutes]);
+
+  const hubFilters: Array<{
+    id: "all" | "new" | "configured" | "todo";
+    label: string;
+    count: number;
+  }> = [
+    {
+      id: "all",
+      label: "Tout",
+      count: hubStatusCounts.new + hubStatusCounts.configured + hubStatusCounts.todo
+    },
+    {
+      id: "new",
+      label: "Nouveau",
+      count: hubStatusCounts.new
+    },
+    {
+      id: "configured",
+      label: "Configuré",
+      count: hubStatusCounts.configured
+    },
+    {
+      id: "todo",
+      label: "À faire",
+      count: hubStatusCounts.todo
+    }
+  ];
+  const primaryHubItems = useMemo(
+    () =>
+      // On évite de dupliquer "Trajet" ici: l'action principale existe déjà juste au-dessus.
+      getPrimaryHomeHubItems(8)
+        .filter((item) => item.href !== "/setup")
+        .slice(0, 4),
+    []
+  );
 
   const iconForHubItem = (item: HomeHubItem): keyof typeof Ionicons.glyphMap => {
     if (item.href === "/setup") return "navigate-outline";
@@ -233,10 +374,39 @@ export default function HomeScreen() {
     if (item.href === "/incident-report") return "document-text-outline";
     if (item.href === "/incidents") return "documents-outline";
     if (item.href === "/privacy-center") return "shield-outline";
+    if (item.href === "/sessions-devices") return "phone-portrait-outline";
     if (item.href === "/accessibility") return "accessibility-outline";
     if (item.href === "/voice-assistant") return "mic-outline";
     if (item.href === "/features-guide") return "book-outline";
     return "sparkles-outline";
+  };
+
+  const renderHubStatusBadge = (status: "new" | "configured" | "todo") => {
+    if (status === "new") {
+      return (
+        <View className="rounded-full bg-cyan-100 px-2 py-0.5">
+          <Text className="text-[10px] font-semibold uppercase tracking-wider text-cyan-700">
+            Nouveau
+          </Text>
+        </View>
+      );
+    }
+    if (status === "configured") {
+      return (
+        <View className="rounded-full bg-emerald-100 px-2 py-0.5">
+          <Text className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+            Configuré
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View className="rounded-full bg-slate-200 px-2 py-0.5">
+        <Text className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+          À faire
+        </Text>
+      </View>
+    );
   };
 
   const getFirstPendingStepIndex = () => {
@@ -293,13 +463,19 @@ export default function HomeScreen() {
         nextState = await setOnboardingCompleted(currentUserId);
       }
 
+      const syncedProgress = await syncTutorialCompletionFromVisitedRoutes(currentUserId);
+
       setOnboardingChecklist(nextChecklist);
       setOnboardingState(nextState);
+      setDiscoveryProgress(syncedProgress);
+      setFullTutorialStepIndex(
+        Math.max(0, Math.min(totalFullTutorialSteps - 1, syncedProgress.tutorialCurrentStepIndex))
+      );
       setShowOnboardingPrompt(!nextState.completed && !nextState.dismissed);
     } finally {
       setOnboardingReady(true);
     }
-  }, []);
+  }, [totalFullTutorialSteps]);
 
   useFocusEffect(
     useCallback(() => {
@@ -332,6 +508,12 @@ export default function HomeScreen() {
     void openGuideFromShortcut();
   }, [params.onboarding, params.onboardingToken, onboardingReady, userId, refreshOnboarding]);
 
+  useEffect(() => {
+    if (showHubModal) return;
+    setHubSearchQuery("");
+    setHubFilter("all");
+  }, [showHubModal]);
+
   const launchGuidedAssistant = async () => {
     if (!userId) return;
     // Démarre l'assistant à la première étape incomplète puis navigue directement vers l'écran cible.
@@ -340,6 +522,18 @@ export default function HomeScreen() {
     setShowOnboardingPrompt(false);
     setShowOnboardingGuide(false);
     router.push(getOnboardingStepRoute(stepId));
+  };
+
+  const launchFullTutorial = () => {
+    // Tutoriel de découverte complet: toutes les pages + mode d'emploi détaillé.
+    const resumeIndex = Math.max(
+      0,
+      Math.min(totalFullTutorialSteps - 1, discoveryProgress?.tutorialCurrentStepIndex ?? 0)
+    );
+    setFullTutorialStepIndex(resumeIndex);
+    setShowOnboardingPrompt(false);
+    setShowOnboardingGuide(false);
+    setShowFullTutorial(true);
   };
 
   const launchGuideFromStep = async (stepId: OnboardingStepId) => {
@@ -370,6 +564,72 @@ export default function HomeScreen() {
       router.push("/account");
     } finally {
       setGuideActionBusy(false);
+    }
+  };
+
+  const accentClasses = (accent: string) => {
+    if (accent === "amber") {
+      return {
+        pill: "bg-amber-100",
+        pillText: "text-amber-700",
+        border: "border-amber-200",
+        surface: "bg-amber-50",
+        cta: "bg-amber-600"
+      };
+    }
+    if (accent === "emerald") {
+      return {
+        pill: "bg-emerald-100",
+        pillText: "text-emerald-700",
+        border: "border-emerald-200",
+        surface: "bg-emerald-50",
+        cta: "bg-emerald-700"
+      };
+    }
+    if (accent === "sky") {
+      return {
+        pill: "bg-sky-100",
+        pillText: "text-sky-700",
+        border: "border-sky-200",
+        surface: "bg-sky-50",
+        cta: "bg-sky-700"
+      };
+    }
+    if (accent === "rose") {
+      return {
+        pill: "bg-rose-100",
+        pillText: "text-rose-700",
+        border: "border-rose-200",
+        surface: "bg-rose-50",
+        cta: "bg-rose-700"
+      };
+    }
+    return {
+      pill: "bg-slate-100",
+      pillText: "text-slate-700",
+      border: "border-slate-200",
+      surface: "bg-slate-50",
+      cta: "bg-slate-800"
+    };
+  };
+
+  const persistFullTutorialCursor = async (stepIndex: number) => {
+    if (!userId) return;
+    try {
+      const next = await setTutorialCurrentStepIndex(userId, stepIndex);
+      setDiscoveryProgress(next);
+    } catch {
+      // no-op: la sauvegarde de reprise ne doit pas casser l'expérience.
+    }
+  };
+
+  const markFullTutorialStepAsCompleted = async (stepId: string | undefined) => {
+    if (!userId || !stepId) return;
+    try {
+      const next = await markTutorialStepCompleted(userId, stepId);
+      setDiscoveryProgress(next);
+    } catch {
+      // no-op
     }
   };
 
@@ -410,9 +670,18 @@ export default function HomeScreen() {
           Lance rapidement un trajet, suis ta position et garde tes proches informes.
         </Text>
 
+        {!onboardingReady ? (
+          <View className="mt-4 gap-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        ) : null}
+
         {onboardingReady && !onboardingComplete && !onboardingState?.dismissed ? (
-          <View className="mt-4 overflow-hidden rounded-3xl border border-cyan-200 bg-cyan-50/90 p-5 shadow-sm">
+          <AnimatedCard delayMs={40}>
+            <View className="mt-4 overflow-hidden rounded-3xl border border-cyan-200 bg-cyan-50/90 p-5 shadow-sm">
             <TouchableOpacity
+              testID="home-dismiss-express-assistant"
               className="absolute right-3 top-3 z-10 h-8 w-8 items-center justify-center rounded-full border border-cyan-200 bg-white/90"
               onPress={async () => {
                 if (!userId) return;
@@ -447,6 +716,7 @@ export default function HomeScreen() {
               Temps restant estimé : {Math.max(1, remainingEstimatedMinutes)} min
             </Text>
             <TouchableOpacity
+              testID="home-open-express-assistant"
               className="mt-4 rounded-2xl bg-[#0f172a] px-4 py-3"
               onPress={launchGuidedAssistant}
             >
@@ -454,10 +724,12 @@ export default function HomeScreen() {
                 Ouvrir le guide
               </Text>
             </TouchableOpacity>
-          </View>
+            </View>
+          </AnimatedCard>
         ) : null}
 
-        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+        <AnimatedCard delayMs={80}>
+          <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Action principale</Text>
           <Text className="mt-2 text-2xl font-bold text-slate-900">Démarrer un trajet</Text>
           <Text className="mt-2 text-sm text-slate-600">
@@ -465,25 +737,33 @@ export default function HomeScreen() {
           </Text>
 
           <Link href="/setup" asChild>
-            <TouchableOpacity className="mt-4 flex-row items-center justify-center rounded-2xl bg-[#111827] px-5 py-4">
+            <AnimatedPressable
+              testID="home-open-setup-button"
+              containerStyle={{ marginTop: 16 }}
+              className="flex-row items-center justify-center rounded-2xl bg-[#111827] px-5 py-4"
+              voiceHint="Ouverture de la préparation de trajet"
+            >
               <Ionicons name="navigate-outline" size={18} color="#ffffff" />
               <Text className="ml-2 text-base font-semibold text-white">Nouveau trajet</Text>
-            </TouchableOpacity>
+            </AnimatedPressable>
           </Link>
-        </View>
+          </View>
+        </AnimatedCard>
 
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+        <AnimatedCard delayMs={120}>
+          <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Widget accueil</Text>
           <Text className="mt-2 text-sm text-slate-600">
             Actions rapides en 1 clic sans passer par plusieurs écrans.
           </Text>
           <View className="mt-3 flex-row gap-2">
-            <Link href="/setup" asChild>
+            <Link href="/trips" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl bg-[#111827] px-4 py-4">
-                <Text className="text-center text-sm font-semibold text-white">Lancer un trajet</Text>
+                <Text className="text-center text-sm font-semibold text-white">Mes trajets</Text>
               </TouchableOpacity>
             </Link>
             <TouchableOpacity
+              testID="home-quick-arrival-button"
               className={`flex-1 rounded-2xl px-4 py-4 ${quickBusy ? "bg-slate-300" : "bg-emerald-600"}`}
               onPress={async () => {
                 try {
@@ -515,7 +795,10 @@ export default function HomeScreen() {
           </View>
           <View className="mt-2 flex-row gap-2">
             <Link href="/quick-sos" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+              <TouchableOpacity
+                testID="home-open-quick-sos-button"
+                className="flex-1 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4"
+              >
                 <Text className="text-center text-sm font-semibold text-rose-700">
                   SOS rapide
                 </Text>
@@ -531,14 +814,22 @@ export default function HomeScreen() {
           </View>
           {quickInfo ? <FeedbackMessage kind="info" message={quickInfo} compact /> : null}
           {quickError ? <FeedbackMessage kind="error" message={quickError} compact /> : null}
-        </View>
+          </View>
+        </AnimatedCard>
 
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+        <AnimatedCard delayMs={160}>
+          <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <View className="flex-row items-center justify-between">
             <Text className="text-xs uppercase tracking-widest text-slate-500">Navigation rapide</Text>
             <TouchableOpacity
+              testID="home-open-hub-button"
               className="rounded-full border border-slate-200 bg-white px-3 py-1"
-              onPress={() => setShowHubModal(true)}
+              onPress={() => {
+                setShowHubModal(true);
+                announce("Hub de navigation ouvert").catch(() => {
+                  // no-op
+                });
+              }}
             >
               <Text className="text-[11px] font-semibold uppercase tracking-wider text-slate-700">
                 Voir tout
@@ -556,7 +847,10 @@ export default function HomeScreen() {
                     <Ionicons name={iconForHubItem(item)} size={17} color="#334155" />
                   </View>
                   <View className="ml-3 flex-1">
-                    <Text className="text-sm font-semibold text-slate-900">{item.title}</Text>
+                    <View className="flex-row items-center gap-2">
+                      <Text className="text-sm font-semibold text-slate-900">{item.title}</Text>
+                      {renderHubStatusBadge(hubItemStatus(item))}
+                    </View>
                     <Text className="mt-0.5 text-xs text-slate-500">{item.subtitle}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
@@ -564,7 +858,8 @@ export default function HomeScreen() {
               </Link>
             ))}
           </View>
-        </View>
+          </View>
+        </AnimatedCard>
       </ScrollView>
 
       <Modal transparent visible={showOnboardingPrompt} animationType="fade">
@@ -586,6 +881,7 @@ export default function HomeScreen() {
 
             <View className="mt-6 flex-row gap-3">
               <TouchableOpacity
+                testID="home-onboarding-prompt-later"
                 className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                 onPress={async () => {
                   if (!userId) return;
@@ -597,6 +893,7 @@ export default function HomeScreen() {
                 <Text className="text-center text-sm font-semibold text-slate-700">Plus tard</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                testID="home-onboarding-prompt-start"
                 className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
                 onPress={async () => {
                   if (!userId) return;
@@ -609,6 +906,16 @@ export default function HomeScreen() {
                 <Text className="text-center text-sm font-semibold text-white">Commencer</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              testID="home-onboarding-prompt-full-tutorial"
+              className="mt-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3"
+              onPress={launchFullTutorial}
+            >
+              <Text className="text-center text-sm font-semibold text-cyan-800">
+                Voir le tutoriel complet (toutes les pages)
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -713,6 +1020,15 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
+            <TouchableOpacity
+              className="mt-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3"
+              onPress={launchFullTutorial}
+            >
+              <Text className="text-center text-sm font-semibold text-cyan-800">
+                Ouvrir le tutoriel complet (toutes les pages)
+              </Text>
+            </TouchableOpacity>
+
             <View className="mt-5 flex-row gap-3">
               <TouchableOpacity
                 className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -782,10 +1098,206 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      <Modal transparent visible={showHubModal} animationType="slide" onRequestClose={() => setShowHubModal(false)}>
+      <Modal
+        transparent
+        visible={showFullTutorial}
+        animationType="slide"
+        onRequestClose={() => {
+          persistFullTutorialCursor(fullTutorialStepIndex).catch(() => {
+            // no-op
+          });
+          setShowFullTutorial(false);
+        }}
+      >
         <View className="flex-1 justify-end bg-black/45">
-          <View className="max-h-[88%] rounded-t-3xl bg-[#FFFCF7] px-6 pb-8 pt-5">
+          <View className="max-h-[90%] rounded-t-3xl bg-[#FFFCF7] px-6 pb-8 pt-5">
             <View className="h-1.5 w-14 self-center rounded-full bg-slate-300" />
+            <View className="mt-4 flex-row items-start justify-between">
+              <View className="flex-1 pr-4">
+                <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-slate-500">
+                  Tutoriel complet
+                </Text>
+                <Text className="mt-1 text-2xl font-extrabold text-[#0F172A]">
+                  Toutes les pages pas à pas
+                </Text>
+              </View>
+              <TouchableOpacity
+                className="rounded-full border border-slate-200 bg-white px-3 py-1"
+                onPress={() => {
+                  persistFullTutorialCursor(fullTutorialStepIndex).catch(() => {
+                    // no-op
+                  });
+                  setShowFullTutorial(false);
+                }}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Fermer
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text className="mt-2 text-sm text-slate-600">
+              {fullTutorialProgressLabel} · {fullTutorialStats.length} sections ·{" "}
+              {totalFullTutorialSteps} étapes
+            </Text>
+            <Text className="mt-1 text-xs font-semibold text-emerald-700">
+              {fullTutorialCompletedCount}/{totalFullTutorialSteps} étapes terminées
+            </Text>
+
+            <View className="mt-3 flex-row flex-wrap gap-2">
+              {fullTutorialStats.map((entry) => (
+                <View
+                  key={`tutorial-stat-${entry.sectionId}`}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1"
+                >
+                  <Text className="text-[11px] font-semibold text-slate-700">
+                    {entry.sectionTitle} · {entry.count}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <ScrollView className="mt-4" contentContainerStyle={{ paddingBottom: 8 }}>
+              {currentFullTutorialStep ? (() => {
+                const palette = accentClasses(currentFullTutorialStep.sectionAccent);
+                return (
+                  <View
+                    className={`rounded-3xl border ${palette.border} ${palette.surface} px-5 py-5`}
+                  >
+                    <View className={`self-start rounded-full px-3 py-1 ${palette.pill}`}>
+                      <Text className={`text-[10px] font-semibold uppercase tracking-[2px] ${palette.pillText}`}>
+                        {currentFullTutorialStep.sectionTitle}
+                      </Text>
+                    </View>
+                    <Text className="mt-3 text-xl font-extrabold text-slate-900">
+                      {currentFullTutorialStep.title}
+                    </Text>
+                    <Text className="mt-2 text-sm text-slate-700">
+                      {currentFullTutorialStep.description}
+                    </Text>
+                    {currentFullTutorialStepDone ? (
+                      <View className="mt-3 self-start rounded-full bg-emerald-100 px-3 py-1">
+                        <Text className="text-xs font-semibold text-emerald-700">
+                          Étape terminée automatiquement
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <View className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <Text className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                        Comment faire
+                      </Text>
+                      <Text className="mt-2 text-sm text-slate-700">
+                        {currentFullTutorialStep.howTo}
+                      </Text>
+                    </View>
+
+                    {currentFullTutorialStep.route ? (
+                      <TouchableOpacity
+                        className={`mt-4 rounded-2xl px-4 py-3 ${palette.cta}`}
+                        onPress={async () => {
+                          await markFullTutorialStepAsCompleted(currentFullTutorialStep.id);
+                          await persistFullTutorialCursor(fullTutorialStepIndex);
+                          setShowFullTutorial(false);
+                          router.push(currentFullTutorialStep.route as any);
+                        }}
+                      >
+                        <Text className="text-center text-sm font-semibold text-white">
+                          Ouvrir cette étape
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <Text className="text-sm font-semibold text-slate-700">
+                          Étape informative (pas d'écran dédié).
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })() : null}
+            </ScrollView>
+
+            <View className="mt-4 flex-row gap-3">
+              <TouchableOpacity
+                className={`flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 ${
+                  fullTutorialStepIndex <= 0 ? "opacity-50" : ""
+                }`}
+                disabled={fullTutorialStepIndex <= 0}
+                onPress={() => {
+                  setFullTutorialStepIndex((prev) => {
+                    const next = Math.max(0, prev - 1);
+                    persistFullTutorialCursor(next).catch(() => {
+                      // no-op
+                    });
+                    return next;
+                  });
+                }}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-700">Précédent</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                onPress={async () => {
+                  await markFullTutorialStepAsCompleted(currentFullTutorialStep?.id);
+                  if (fullTutorialStepIndex >= totalFullTutorialSteps - 1) {
+                    persistFullTutorialCursor(fullTutorialStepIndex).catch(() => {
+                      // no-op
+                    });
+                    setShowFullTutorial(false);
+                    return;
+                  }
+                  setFullTutorialStepIndex((prev) => {
+                    const next = Math.min(totalFullTutorialSteps - 1, prev + 1);
+                    persistFullTutorialCursor(next).catch(() => {
+                      // no-op
+                    });
+                    return next;
+                  });
+                }}
+              >
+                <Text className="text-center text-sm font-semibold text-white">
+                  {fullTutorialStepIndex >= totalFullTutorialSteps - 1 ? "Terminer" : "Suivant"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={showHubModal} animationType="slide" onRequestClose={() => setShowHubModal(false)}>
+        <View className="flex-1 bg-black/45">
+          <Pressable
+            testID="home-hub-overlay-close"
+            style={{ flex: 1 }}
+            onPress={() => setShowHubModal(false)}
+          />
+          <View
+            className="max-h-[88%] rounded-t-3xl bg-[#FFFCF7] px-6 pb-8 pt-5"
+          >
+            <View
+              className="h-1.5 w-14 self-center rounded-full bg-slate-300"
+              {...PanResponder.create({
+                onStartShouldSetPanResponder: () => true,
+                onPanResponderGrant: (event) => {
+                  hubSheetDragStartY.current = event.nativeEvent.pageY;
+                },
+                onPanResponderMove: (event) => {
+                  if (hubSheetDragStartY.current == null) return;
+                  const delta = event.nativeEvent.pageY - hubSheetDragStartY.current;
+                  if (delta > 30) {
+                    hubSheetDragStartY.current = null;
+                    setShowHubModal(false);
+                  }
+                },
+                onPanResponderRelease: () => {
+                  hubSheetDragStartY.current = null;
+                },
+                onPanResponderTerminate: () => {
+                  hubSheetDragStartY.current = null;
+                }
+              }).panHandlers}
+            />
             <View className="mt-4 flex-row items-center justify-between">
               <Text className="text-xl font-extrabold text-[#0F172A]">Toutes les pages</Text>
               <TouchableOpacity
@@ -797,27 +1309,100 @@ export default function HomeScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+            <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+              <View className="flex-row items-center">
+                <Ionicons name="search-outline" size={16} color="#64748b" />
+                <TextInput
+                  testID="home-hub-search-input"
+                  className="ml-2 flex-1 text-sm text-slate-900"
+                  placeholder="Rechercher une page, une action..."
+                  placeholderTextColor="#94a3b8"
+                  value={hubSearchQuery}
+                  onChangeText={setHubSearchQuery}
+                />
+                {hubSearchQuery.trim().length > 0 ? (
+                  <TouchableOpacity
+                    className="rounded-full bg-slate-100 px-2 py-1"
+                    onPress={() => setHubSearchQuery("")}
+                  >
+                    <Ionicons name="close" size={12} color="#334155" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-3"
+              contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+            >
+              {hubFilters.map((filter) => {
+                const active = hubFilter === filter.id;
+                return (
+                  <TouchableOpacity
+                    key={`hub-filter-${filter.id}`}
+                    className={`rounded-full border px-3 py-2 ${
+                      active ? "border-slate-900 bg-slate-900" : "border-slate-200 bg-white"
+                    }`}
+                    onPress={() => setHubFilter(filter.id)}
+                  >
+                    <Text
+                      className={`text-xs font-semibold uppercase tracking-wider ${
+                        active ? "text-white" : "text-slate-700"
+                      }`}
+                    >
+                      {filter.label} · {filter.count}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
             <ScrollView className="mt-4">
-              {hubSections.map((section) => (
-                <View key={section.id} className="mb-4 rounded-3xl border border-[#E7E0D7] bg-white p-4">
-                  <Text className="text-xs uppercase tracking-widest text-slate-500">{section.title}</Text>
-                  {section.items.map((item) => (
-                    <Link key={item.id} href={item.href} asChild>
-                      <TouchableOpacity
-                        className="mt-2 flex-row items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3"
-                        onPress={() => setShowHubModal(false)}
-                      >
-                        <Ionicons name={iconForHubItem(item)} size={16} color="#334155" />
-                        <View className="ml-3 flex-1">
-                          <Text className="text-sm font-semibold text-slate-900">{item.title}</Text>
-                          <Text className="mt-0.5 text-xs text-slate-500">{item.subtitle}</Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
-                      </TouchableOpacity>
-                    </Link>
-                  ))}
+              {!onboardingReady ? (
+                <View className="gap-3">
+                  <SkeletonCard />
+                  <SkeletonCard />
+                  <SkeletonCard />
                 </View>
-              ))}
+              ) : filteredHubSections.length === 0 ? (
+                <PremiumEmptyState
+                  title="Aucun résultat"
+                  description="Aucune page ne correspond à cette recherche ou à ce filtre."
+                  icon="search-outline"
+                  actionLabel="Réinitialiser les filtres"
+                  onActionPress={() => {
+                    setHubFilter("all");
+                    setHubSearchQuery("");
+                  }}
+                />
+              ) : (
+                filteredHubSections.map((section) => (
+                  <View key={section.id} className="mb-4 rounded-3xl border border-[#E7E0D7] bg-white p-4">
+                    <Text className="text-xs uppercase tracking-widest text-slate-500">{section.title}</Text>
+                    {section.items.map((item) => {
+                      const status = hubItemStatus(item);
+                      return (
+                        <Link key={item.id} href={item.href} asChild>
+                          <TouchableOpacity
+                            className="mt-2 flex-row items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3"
+                            onPress={() => setShowHubModal(false)}
+                          >
+                            <Ionicons name={iconForHubItem(item)} size={16} color="#334155" />
+                            <View className="ml-3 flex-1">
+                              <View className="flex-row items-center gap-2">
+                                <Text className="text-sm font-semibold text-slate-900">{item.title}</Text>
+                                {renderHubStatusBadge(status)}
+                              </View>
+                              <Text className="mt-0.5 text-xs text-slate-500">{item.subtitle}</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+                          </TouchableOpacity>
+                        </Link>
+                      );
+                    })}
+                  </View>
+                ))
+              )}
             </ScrollView>
           </View>
         </View>

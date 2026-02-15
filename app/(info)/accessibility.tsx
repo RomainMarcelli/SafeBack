@@ -12,10 +12,11 @@ import {
   type TextScale
 } from "../../src/lib/accessibility/preferences";
 import { triggerAccessibleHaptic } from "../../src/lib/accessibility/feedback";
-import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { useAppToast } from "../../src/components/AppToastProvider";
 
 export default function AccessibilityScreen() {
   const router = useRouter();
+  const { showToast } = useAppToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [prefs, setPrefs] = useState<AccessibilityPreferences | null>(null);
@@ -35,6 +36,18 @@ export default function AccessibilityScreen() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!errorMessage) return;
+    showToast({ kind: "error", message: errorMessage, durationMs: 4800 });
+    setErrorMessage("");
+  }, [errorMessage, showToast]);
+
+  useEffect(() => {
+    if (!successMessage) return;
+    showToast({ kind: "success", message: successMessage, durationMs: 3200 });
+    setSuccessMessage("");
+  }, [successMessage, showToast]);
 
   const updatePref = async (patch: Partial<AccessibilityPreferences>) => {
     try {
@@ -164,6 +177,25 @@ export default function AccessibilityScreen() {
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Voice hints</Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Annonces vocales contextuelles (ouverture de sections, validations, actions sensibles).
+          </Text>
+          <View className="mt-3 flex-row items-center justify-between">
+            <Text className="text-sm font-semibold text-slate-800">Activer</Text>
+            <Switch
+              value={Boolean(prefs?.voiceHintsEnabled)}
+              onValueChange={(value) => {
+                updatePref({ voiceHintsEnabled: value }).catch(() => {
+                  // no-op
+                });
+              }}
+              disabled={loading || saving}
+            />
+          </View>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Mode malvoyant (beta)</Text>
           <Text className="mt-2 text-sm text-slate-600">
             Active un profil renforcé: texte grand, contraste élevé et retours adaptés.
@@ -177,7 +209,8 @@ export default function AccessibilityScreen() {
                   blindModeEnabled: value,
                   textScale: value ? "large" : prefs?.textScale ?? "normal",
                   highContrast: value ? true : prefs?.highContrast ?? false,
-                  voiceCommandsEnabled: value ? true : prefs?.voiceCommandsEnabled ?? false
+                  voiceCommandsEnabled: value ? true : prefs?.voiceCommandsEnabled ?? false,
+                  voiceHintsEnabled: value ? true : prefs?.voiceHintsEnabled ?? true
                 }).catch(() => {
                   // no-op
                 });
@@ -229,8 +262,6 @@ export default function AccessibilityScreen() {
           <Text className="text-center text-sm font-semibold text-amber-700">Réinitialiser l'accessibilité</Text>
         </TouchableOpacity>
 
-        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
-        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

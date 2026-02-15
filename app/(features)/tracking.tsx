@@ -533,6 +533,7 @@ export default function TrackingScreen() {
       setSosInfo(null);
 
       let latestCoords = coords;
+      let currentAddress: string | null = null;
       if (!latestCoords) {
         try {
           const permission = await Location.requestForegroundPermissionsAsync();
@@ -548,6 +549,30 @@ export default function TrackingScreen() {
           }
         } catch {
           // Garde un message de secours si la position reste inconnue dans le SOS.
+        }
+      }
+      if (latestCoords) {
+        try {
+          const reverse = await Location.reverseGeocodeAsync({
+            latitude: latestCoords.lat,
+            longitude: latestCoords.lon
+          });
+          const first = reverse[0];
+          if (first) {
+            currentAddress = [
+              first.name,
+              first.street,
+              first.postalCode,
+              first.city,
+              first.region,
+              first.country
+            ]
+              .map((part) => String(part ?? "").trim())
+              .filter((part) => part.length > 0)
+              .join(", ");
+          }
+        } catch {
+          currentAddress = null;
         }
       }
 
@@ -567,6 +592,7 @@ export default function TrackingScreen() {
       const body = buildSosMessage({
         fromAddress: session.from_address,
         toAddress: session.to_address,
+        currentAddress,
         coords: latestCoords ? { lat: latestCoords.lat, lon: latestCoords.lon } : null
       });
       const smsUrl = buildSmsUrl({
@@ -836,7 +862,7 @@ export default function TrackingScreen() {
           </TouchableOpacity>
 
           {sosError ? <FeedbackMessage kind="error" message={sosError} compact /> : null}
-          {sosInfo ? <FeedbackMessage kind="info" message={sosInfo} compact /> : null}
+          {sosInfo ? <FeedbackMessage kind="error" message={sosInfo} compact /> : null}
           <TouchableOpacity
             className="mt-3 rounded-2xl border border-rose-200 bg-white px-4 py-3"
             onPress={() => {
@@ -844,6 +870,7 @@ export default function TrackingScreen() {
               const draftBody = buildSosMessage({
                 fromAddress: session.from_address,
                 toAddress: session.to_address,
+                currentAddress: null,
                 coords: coords ? { lat: coords.lat, lon: coords.lon } : null
               });
               router.push({

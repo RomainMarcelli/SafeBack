@@ -12,20 +12,21 @@ export function formatSosCoords(coords: SosCoords | null | undefined): string {
 export function buildSosMessage(params: {
   fromAddress?: string | null;
   toAddress?: string | null;
+  currentAddress?: string | null;
   coords?: SosCoords | null;
   now?: Date;
 }): string {
-  const now = params.now ?? new Date();
-  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const from = params.fromAddress?.trim() || "inconnu";
-  const to = params.toAddress?.trim() || "inconnu";
-  const location = formatSosCoords(params.coords ?? null);
+  const fallbackFromTo =
+    params.fromAddress?.trim() && params.toAddress?.trim()
+      ? `${params.fromAddress?.trim()} -> ${params.toAddress?.trim()}`
+      : "adresse actuelle inconnue";
+  const location = params.currentAddress?.trim() || fallbackFromTo;
   const mapsLink =
     params.coords && Number.isFinite(params.coords.lat) && Number.isFinite(params.coords.lon)
       ? ` https://maps.google.com/?q=${params.coords.lat},${params.coords.lon}`
       : "";
 
-  return `ALERTE SOS SafeBack (${time}). Je peux etre en danger. Trajet: ${from} -> ${to}. Position: ${location}.${mapsLink}`;
+  return `Je suis en danger. Je suis ici : ${location}.${mapsLink}`;
 }
 
 export function buildSmsUrl(params: {

@@ -327,6 +327,208 @@ to anon, authenticated;
 
 commit;
 
+-- ============================================================================
+-- Migration 009: monitoring runtime + metriques UX
+-- ============================================================================
+
+begin;
+
+create table if not exists public.runtime_error_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text,
+  error_name text not null,
+  error_message text not null,
+  stack text,
+  fatal boolean not null default false,
+  context text,
+  data jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.ux_metric_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text,
+  metric_name text not null,
+  metric_value double precision,
+  duration_ms integer,
+  context text,
+  data jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists runtime_error_events_user_created_idx
+  on public.runtime_error_events(user_id, created_at desc);
+
+create index if not exists ux_metric_events_user_created_idx
+  on public.ux_metric_events(user_id, created_at desc);
+
+alter table public.runtime_error_events enable row level security;
+alter table public.ux_metric_events enable row level security;
+
+drop policy if exists runtime_error_events_select on public.runtime_error_events;
+create policy runtime_error_events_select
+on public.runtime_error_events
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists runtime_error_events_insert on public.runtime_error_events;
+create policy runtime_error_events_insert
+on public.runtime_error_events
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists runtime_error_events_delete on public.runtime_error_events;
+create policy runtime_error_events_delete
+on public.runtime_error_events
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_select on public.ux_metric_events;
+create policy ux_metric_events_select
+on public.ux_metric_events
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_insert on public.ux_metric_events;
+create policy ux_metric_events_insert
+on public.ux_metric_events
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_delete on public.ux_metric_events;
+create policy ux_metric_events_delete
+on public.ux_metric_events
+for delete
+using (auth.uid() = user_id);
+
+commit;
+
+-- ============================================================================
+-- Migration 008: sessions/appareils + consentements granulaires
+-- ============================================================================
+
+begin;
+
+-- Registre des appareils connectés pour permettre "déconnecter les autres".
+create table if not exists public.user_device_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text not null check (length(trim(device_id)) > 0),
+  device_label text not null default 'Appareil',
+  platform text not null default 'unknown',
+  app_version text,
+  last_seen_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, device_id)
+);
+
+create index if not exists user_device_sessions_user_seen_idx
+  on public.user_device_sessions(user_id, last_seen_at desc);
+
+create index if not exists user_device_sessions_user_revoked_idx
+  on public.user_device_sessions(user_id, revoked_at);
+
+create or replace function public.handle_user_device_sessions_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists user_device_sessions_set_updated_at on public.user_device_sessions;
+create trigger user_device_sessions_set_updated_at
+before update on public.user_device_sessions
+for each row
+execute function public.handle_user_device_sessions_updated_at();
+
+alter table public.user_device_sessions enable row level security;
+
+drop policy if exists user_device_sessions_select on public.user_device_sessions;
+create policy user_device_sessions_select
+on public.user_device_sessions
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_insert on public.user_device_sessions;
+create policy user_device_sessions_insert
+on public.user_device_sessions
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_update on public.user_device_sessions;
+create policy user_device_sessions_update
+on public.user_device_sessions
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_delete on public.user_device_sessions;
+create policy user_device_sessions_delete
+on public.user_device_sessions
+for delete
+using (auth.uid() = user_id);
+
+-- Consentements granulaires (position, présence, notifications, partage live).
+alter table public.profiles
+  add column if not exists consent_location boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_presence boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_notifications boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_live_share boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_updated_at timestamptz;
+
+create or replace function public.revoke_other_device_sessions(
+  p_current_device_id text
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_revoked_count integer := 0;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  if coalesce(trim(p_current_device_id), '') = '' then
+    raise exception 'Appareil courant manquant';
+  end if;
+
+  update public.user_device_sessions s
+  set
+    revoked_at = now(),
+    updated_at = now()
+  where s.user_id = v_user_id
+    and s.device_id <> p_current_device_id
+    and s.revoked_at is null;
+
+  get diagnostics v_revoked_count = row_count;
+  return v_revoked_count;
+end;
+$$;
+
+grant execute on function public.revoke_other_device_sessions(text) to authenticated;
+
+commit;
+
 begin;
 
 create or replace function public.delete_my_account()

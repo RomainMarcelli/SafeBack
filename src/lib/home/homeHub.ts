@@ -23,6 +23,7 @@ export type HomeHubItem = {
     | "/live-companion"
     | "/safety-drill"
     | "/privacy-center"
+    | "/sessions-devices"
     | "/accessibility"
     | "/voice-assistant"
     | "/features-guide";
@@ -140,6 +141,13 @@ export const HOME_HUB_ITEMS: HomeHubItem[] = [
     title: "Confidentialité",
     subtitle: "Permissions, journal de partage et reset global.",
     href: "/privacy-center",
+    category: "support"
+  },
+  {
+    id: "sessions-devices",
+    title: "Sessions & appareils",
+    subtitle: "Appareils connectés et déconnexion des autres sessions.",
+    href: "/sessions-devices",
     category: "support"
   },
   {

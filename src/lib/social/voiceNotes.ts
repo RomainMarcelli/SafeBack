@@ -38,8 +38,11 @@ export async function startVoiceRecording(): Promise<Audio.Recording> {
 }
 
 export async function stopVoiceRecording(recording: Audio.Recording): Promise<VoiceDraft> {
+  // Certains appareils remontent une durée à 0 après `stopAndUnloadAsync`.
+  // On lit d'abord l'état avant l'arrêt pour conserver une durée fiable.
+  const statusBeforeStop = await recording.getStatusAsync();
   await recording.stopAndUnloadAsync();
-  const status = await recording.getStatusAsync();
+  const statusAfterStop = await recording.getStatusAsync();
   const uri = recording.getURI();
   await Audio.setAudioModeAsync({
     allowsRecordingIOS: false,
@@ -54,7 +57,10 @@ export async function stopVoiceRecording(recording: Audio.Recording): Promise<Vo
   }
   return {
     uri,
-    durationMs: status.durationMillis ?? 0
+    durationMs:
+      statusBeforeStop.durationMillis ??
+      statusAfterStop.durationMillis ??
+      0
   };
 }
 

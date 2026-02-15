@@ -60,3 +60,9 @@ export async function listFriendMapPresence(userIds: string[]): Promise<FriendMa
   if (error) throw error;
   return (data ?? []) as FriendMapPresence[];
 }
+
+export async function clearMyFriendMapPresence(): Promise<void> {
+  const userId = await requireUserId();
+  const { error } = await supabase.from("friend_map_presence").delete().eq("user_id", userId);
+  if (error) throw error;
+}

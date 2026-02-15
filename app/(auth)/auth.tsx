@@ -148,6 +148,7 @@ export default function AuthScreen() {
               <Ionicons name="person-outline" size={16} color="#334155" />
             </View>
             <TextInput
+              testID="auth-identifier-input"
               className="ml-2 flex-1 py-3 text-base text-slate-900"
               placeholder="username ou prenom@email.com"
               placeholderTextColor="#94a3b8"
@@ -167,6 +168,7 @@ export default function AuthScreen() {
               <Ionicons name="lock-closed-outline" size={16} color="#334155" />
             </View>
             <TextInput
+              testID="auth-password-input"
               className="ml-2 flex-1 py-3 text-base text-slate-900"
               placeholder="********"
               placeholderTextColor="#94a3b8"
@@ -211,6 +213,7 @@ export default function AuthScreen() {
           {infoMessage ? <FeedbackMessage kind="info" message={infoMessage} compact /> : null}
 
           <TouchableOpacity
+            testID="auth-login-button"
             className={`mt-5 rounded-2xl px-4 py-4 ${
               canSubmit && !saving ? "bg-[#111827]" : "bg-slate-300"
             }`}
@@ -223,7 +226,10 @@ export default function AuthScreen() {
           </TouchableOpacity>
 
           <Link href="/signup" asChild>
-            <TouchableOpacity className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <TouchableOpacity
+              testID="auth-go-signup-button"
+              className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            >
                 <Text className="text-center text-sm font-semibold text-slate-800">
                 Créer un compte
               </Text>

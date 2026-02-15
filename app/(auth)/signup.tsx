@@ -110,6 +110,7 @@ export default function SignupScreen() {
           >
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
+            testID="signup-back-button"
             className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
@@ -132,6 +133,7 @@ export default function SignupScreen() {
         <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Email</Text>
           <TextInput
+            testID="signup-email-input"
             className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="prenom@email.com"
             placeholderTextColor="#94a3b8"
@@ -144,6 +146,7 @@ export default function SignupScreen() {
           <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">Mot de passe</Text>
           <View className="mt-3 flex-row items-center rounded-2xl border border-slate-200 bg-[#F8FAFC] px-3">
             <TextInput
+              testID="signup-password-input"
               className="flex-1 py-3 text-base text-slate-900"
               placeholder="********"
               placeholderTextColor="#94a3b8"
@@ -222,6 +225,7 @@ export default function SignupScreen() {
           ) : null}
 
           <TouchableOpacity
+            testID="signup-submit-button"
             className={`mt-5 rounded-2xl px-4 py-4 ${
               canSubmit && !saving ? "bg-[#111827]" : "bg-slate-300"
             }`}
