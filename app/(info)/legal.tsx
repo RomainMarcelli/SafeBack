@@ -22,8 +22,27 @@ export default function LegalScreen() {
         </View>
 
         <Text className="mt-2 text-sm text-slate-600">
-          Ce contenu est statique et peut etre adapte selon tes besoins juridiques.
+          Accède aux documents légaux détaillés et à jour depuis cette page.
         </Text>
+
+        <View className="mt-4 flex-row gap-2">
+          <TouchableOpacity
+            className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+            onPress={() => router.push("/legal/privacy")}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              Politique de confidentialité
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            onPress={() => router.push("/legal/terms")}
+          >
+            <Text className="text-center text-sm font-semibold text-slate-700">
+              Conditions d utilisation
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-sm font-semibold text-slate-900">
@@ -69,4 +88,3 @@ export default function LegalScreen() {
     </SafeAreaView>
   );
 }
-

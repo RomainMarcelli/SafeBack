@@ -298,8 +298,23 @@ function AddressInput(props: {
   );
 }
 
+function useSafeLocalSearchParams() {
+  const warnedRef = useRef(false);
+  try {
+    return useLocalSearchParams<{ from?: string; to?: string; mode?: string }>();
+  } catch (error) {
+    if (!warnedRef.current) {
+      warnedRef.current = true;
+      console.error("[setup/nav] useLocalSearchParams unavailable", {
+        message: String((error as { message?: string })?.message ?? error)
+      });
+    }
+    return {} as { from?: string; to?: string; mode?: string };
+  }
+}
+
 export default function SetupScreen() {
-  const params = useLocalSearchParams<{ from?: string; to?: string; mode?: string }>();
+  const params = useSafeLocalSearchParams();
   const revealValues = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
   ).current;
@@ -522,6 +537,15 @@ export default function SetupScreen() {
     }, 600);
     return () => clearTimeout(handle);
   }, [fromAddress, toAddress, routeMode, hasGoogleKey]);
+
+  useEffect(() => {
+    console.log("[setup/route] loading-state", {
+      loading: routeLoading,
+      hasRoute: Boolean(routeResult),
+      fromLength: fromAddress.trim().length,
+      toLength: toAddress.trim().length
+    });
+  }, [routeLoading, routeResult, fromAddress, toAddress]);
 
   useEffect(() => {
     const animations = revealValues.map((value) =>

@@ -18,12 +18,13 @@ import {
   type TextInputProps
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getProfile, upsertProfile } from "../../src/lib/core/db";
+import { deleteMyAccountCascade, getProfile, upsertProfile } from "../../src/lib/core/db";
 import { ensureMyPublicProfile, type PublicProfile } from "../../src/lib/social/friendsDb";
 import { clearActiveSessionId } from "../../src/lib/trips/activeSession";
 import { getAccessibilityPreferences } from "../../src/lib/accessibility/preferences";
 import { getThemeMode, setThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
 import { signInWithCredentials } from "../../src/lib/auth/authFlows";
+import { toSignInErrorFr } from "../../src/lib/auth/signInErrorFr";
 import { getHomeHubSections, type HomeHubItem } from "../../src/lib/home/homeHub";
 import {
   getDiscoveryProgress,
@@ -354,15 +355,50 @@ export default function AccountScreen() {
     try {
       setSwitchingAccount(true);
       setErrorMessage("");
-      await supabase.auth.signOut();
+      setSuccessMessage("");
+      console.log("[account/dev-switch] switch:start", {
+        email: account.email,
+        label: account.label
+      });
       await signInWithCredentials({
         identifier: account.email,
         password: account.password
       });
+      console.log("[account/dev-switch] switch:success", {
+        email: account.email
+      });
       setSuccessMessage(`Connecté sur ${account.label}.`);
       router.replace("/");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible de switcher ce compte test.");
+      const mapped = toSignInErrorFr(error);
+      console.log("[account/dev-switch] switch:error", {
+        email: account.email,
+        kind: mapped.kind,
+        code: mapped.code ?? null,
+        message: mapped.message
+      });
+      if (mapped.kind === "email_not_confirmed") {
+        let resent = false;
+        try {
+          const { error: resendError } = await supabase.auth.resend({
+            type: "signup",
+            email: account.email
+          });
+          if (!resendError) {
+            resent = true;
+          }
+        } catch {
+          resent = false;
+        }
+        setErrorMessage(
+          resent
+            ? "Ce compte test n'est pas confirmé. Email de confirmation renvoyé, vérifie la boîte mail."
+            : "Ce compte test n'est pas confirmé. Active la confirmation email dans Supabase (Auth > Providers > Email) ou confirme l'adresse de ce compte."
+        );
+        return;
+      }
+      const finalMessage = mapped.message || error?.message || "Impossible de switcher ce compte test.";
+      setErrorMessage(finalMessage);
     } finally {
       setSwitchingAccount(false);
     }
@@ -384,8 +420,7 @@ export default function AccountScreen() {
     try {
       setDeletingAccount(true);
       setErrorMessage("");
-      const { error } = await supabase.rpc("delete_my_account");
-      if (error) throw error;
+      await deleteMyAccountCascade();
       await clearActiveSessionId();
       await supabase.auth.signOut();
       router.replace("/auth");
@@ -801,6 +836,22 @@ export default function AccountScreen() {
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
                 <Text className="text-center text-sm font-semibold text-slate-700">
                   Appareils
+                </Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/legal/privacy" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Politique de confidentialité
+                </Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/legal/terms" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Conditions d utilisation
                 </Text>
               </TouchableOpacity>
             </Link>

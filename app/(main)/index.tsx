@@ -916,6 +916,23 @@ export default function HomeScreen() {
                 Voir le tutoriel complet (toutes les pages)
               </Text>
             </TouchableOpacity>
+
+            <View className="mt-3 flex-row gap-2">
+              <Link href="/legal/privacy" asChild>
+                <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <Text className="text-center text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Confidentialité
+                  </Text>
+                </TouchableOpacity>
+              </Link>
+              <Link href="/legal/terms" asChild>
+                <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <Text className="text-center text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Conditions
+                  </Text>
+                </TouchableOpacity>
+              </Link>
+            </View>
           </View>
         </View>
       </Modal>

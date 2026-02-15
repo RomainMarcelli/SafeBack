@@ -55,6 +55,21 @@ const TABS: TabItem[] = [
   }
 ];
 
+function useSafePathname() {
+  const warnedRef = useRef(false);
+  try {
+    return usePathname();
+  } catch (error) {
+    if (!warnedRef.current) {
+      warnedRef.current = true;
+      console.error("[main-layout/nav] usePathname unavailable", {
+        message: String((error as { message?: string })?.message ?? error)
+      });
+    }
+    return "/";
+  }
+}
+
 function TabButton(props: {
   item: TabItem;
   active: boolean;
@@ -152,7 +167,7 @@ function TabButton(props: {
 }
 
 export default function MainLayout() {
-  const pathname = usePathname();
+  const pathname = useSafePathname();
   const insets = useSafeAreaInsets();
   const [unreadCount, setUnreadCount] = useState(0);
   const [online, setOnline] = useState<boolean>(true);
@@ -441,7 +456,14 @@ export default function MainLayout() {
                 online={online}
                 onPress={() => {
                   if (!active) {
-                    router.push(tab.href);
+                    try {
+                      router.push(tab.href);
+                    } catch (error) {
+                      console.error("[main-layout/nav] tab push failed", {
+                        href: tab.href,
+                        message: String((error as { message?: string })?.message ?? error)
+                      });
+                    }
                   }
                 }}
               />
@@ -458,7 +480,15 @@ export default function MainLayout() {
           >
             <TouchableOpacity
               testID="notifications-fab"
-              onPress={() => router.push("/notifications")}
+              onPress={() => {
+                try {
+                  router.push("/notifications");
+                } catch (error) {
+                  console.error("[main-layout/nav] notifications push failed", {
+                    message: String((error as { message?: string })?.message ?? error)
+                  });
+                }
+              }}
               style={{
                 width: 44,
                 height: 44,

@@ -161,6 +161,8 @@ supabase/
   all_in_one.sql         script unique pret a executer
   migrations/            scripts SQL versionnes
   legacy/                ancien schema conserve pour reference
+docs/
+  data-architecture.md   schema, relations, flux et RLS
 ```
 
 ## Tests

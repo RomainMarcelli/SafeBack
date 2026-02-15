@@ -1,5 +1,5 @@
 import "../global.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, usePathname } from "expo-router";
 import Constants from "expo-constants";
 import * as QuickActions from "expo-quick-actions";
@@ -29,8 +29,23 @@ if (Constants.appOwnership === "expo") {
   enableFreeze(false);
 }
 
+function useSafePathname() {
+  const warnedRef = useRef(false);
+  try {
+    return usePathname();
+  } catch (error) {
+    if (!warnedRef.current) {
+      warnedRef.current = true;
+      console.error("[root-layout/nav] usePathname unavailable", {
+        message: String((error as { message?: string })?.message ?? error)
+      });
+    }
+    return "/";
+  }
+}
+
 export default function RootLayout() {
-  const pathname = usePathname();
+  const pathname = useSafePathname();
   const [pingPromptQueue, setPingPromptQueue] = useState<
     Array<{
       notificationId: string;

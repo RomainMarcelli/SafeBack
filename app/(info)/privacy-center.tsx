@@ -6,7 +6,7 @@ import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
-import { getProfile, upsertProfile } from "../../src/lib/core/db";
+import { deleteMyAccountCascade, getProfile, upsertProfile } from "../../src/lib/core/db";
 import { getPendingTripQueueCount } from "../../src/lib/trips/offlineTripQueue";
 import { listPrivacyEvents, logPrivacyEvent, type PrivacyEvent } from "../../src/lib/privacy/privacyCenter";
 import { confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
@@ -19,6 +19,8 @@ import { supabase } from "../../src/lib/core/supabase";
 import { useAppToast } from "../../src/components/AppToastProvider";
 import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
 import { SkeletonCard } from "../../src/components/ui/Skeleton";
+import { clearActiveSessionId } from "../../src/lib/trips/activeSession";
+import { exportAndShareMyDataJson } from "../../src/lib/privacy/dataExport";
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
@@ -37,6 +39,8 @@ export default function PrivacyCenterScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyReset, setBusyReset] = useState(false);
+  const [busyExport, setBusyExport] = useState(false);
+  const [busyDeleteAccount, setBusyDeleteAccount] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [privacyEvents, setPrivacyEvents] = useState<PrivacyEvent[]>([]);
@@ -226,6 +230,65 @@ export default function PrivacyCenterScreen() {
     setSuccessMessage(`Consentement "${label}" mis à jour.`);
   };
 
+  const exportMyDataAsJson = async () => {
+    const confirmed = await confirmSensitiveAction({
+      firstTitle: "Exporter toutes tes données ?",
+      firstMessage:
+        "SafeBack va générer un export JSON complet (profil, trajets, positions, messages, incidents et logs).",
+      secondTitle: "Confirmer l'export",
+      secondMessage: "Confirme pour lancer l'export RGPD.",
+      secondConfirmLabel: "Exporter",
+      delayMs: 700
+    });
+    if (!confirmed) return;
+
+    try {
+      setBusyExport(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      const result = await exportAndShareMyDataJson();
+      await logPrivacyEvent({
+        type: "consent_updated",
+        message: "Export JSON des données utilisateur généré.",
+        data: {
+          file_name: result.fileName,
+          has_file_uri: Boolean(result.fileUri)
+        }
+      });
+      setSuccessMessage("Export JSON généré et prêt au partage.");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de générer l'export JSON.");
+    } finally {
+      setBusyExport(false);
+    }
+  };
+
+  const deleteMyAccountFromPrivacyCenter = async () => {
+    const confirmed = await confirmSensitiveAction({
+      firstTitle: "Supprimer définitivement ton compte ?",
+      firstMessage:
+        "Cette action supprime ton profil et toutes tes données liées (trajets, messages, incidents, logs, contacts).",
+      secondTitle: "Dernière confirmation",
+      secondMessage: "Confirme la suppression définitive de ton compte SafeBack.",
+      secondConfirmLabel: "Supprimer",
+      delayMs: 1000
+    });
+    if (!confirmed) return;
+
+    try {
+      setBusyDeleteAccount(true);
+      setErrorMessage("");
+      await deleteMyAccountCascade();
+      await clearActiveSessionId();
+      await supabase.auth.signOut();
+      router.replace("/auth");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Suppression du compte impossible.");
+    } finally {
+      setBusyDeleteAccount(false);
+    }
+  };
+
   if (!checking && !userId) {
     return null;
   }
@@ -377,6 +440,63 @@ export default function PrivacyCenterScreen() {
           >
             <Text className="text-center text-sm font-semibold text-white">
               Ouvrir Sessions & appareils
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">
+            Documents légaux & RGPD
+          </Text>
+          <Text className="mt-2 text-sm text-slate-600">
+            Consulte les documents légaux, exporte tes données ou supprime ton compte.
+          </Text>
+          <View className="mt-3 flex-row gap-2">
+            <TouchableOpacity
+              className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.push("/legal/privacy")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Politique de confidentialité
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.push("/legal/terms")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Conditions d utilisation
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            className={`mt-3 rounded-2xl px-4 py-3 ${
+              busyExport ? "bg-slate-300" : "bg-[#111827]"
+            }`}
+            onPress={() => {
+              exportMyDataAsJson().catch(() => {
+                // no-op
+              });
+            }}
+            disabled={busyExport}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              {busyExport ? "Export en cours..." : "Exporter mes données (JSON)"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className={`mt-2 rounded-2xl px-4 py-3 ${
+              busyDeleteAccount ? "bg-rose-200" : "bg-rose-600"
+            }`}
+            onPress={() => {
+              deleteMyAccountFromPrivacyCenter().catch(() => {
+                // no-op
+              });
+            }}
+            disabled={busyDeleteAccount}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              {busyDeleteAccount ? "Suppression..." : "Supprimer définitivement mon compte"}
             </Text>
           </TouchableOpacity>
         </View>

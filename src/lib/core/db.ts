@@ -26,6 +26,17 @@ export type SharedSessionSnapshot = {
   points: SharedLocationPoint[];
 };
 
+export type UserDataExportBundle = {
+  generated_at: string;
+  user_id: string;
+  [key: string]: unknown;
+};
+
+export type DeleteMyAccountResult = {
+  deleted: boolean;
+  user_id?: string | null;
+};
+
 export async function listFavoriteAddresses(): Promise<FavoriteAddress[]> {
   const { data, error } = await supabase
     .from("favorite_addresses")
@@ -343,4 +354,16 @@ export async function listIncidentReports(limit = 100): Promise<IncidentReport[]
     .limit(limit);
   if (error) throw error;
   return (data ?? []) as IncidentReport[];
+}
+
+export async function exportMyData(): Promise<UserDataExportBundle> {
+  const { data, error } = await supabase.rpc("export_my_data");
+  if (error) throw error;
+  return (data ?? {}) as UserDataExportBundle;
+}
+
+export async function deleteMyAccountCascade(): Promise<DeleteMyAccountResult> {
+  const { data, error } = await supabase.rpc("delete_my_account");
+  if (error) throw error;
+  return (data ?? { deleted: false }) as DeleteMyAccountResult;
 }
