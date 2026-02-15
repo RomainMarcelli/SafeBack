@@ -73,7 +73,7 @@ describe("homeWidgetState", () => {
   it("formats status labels and updatedAt", () => {
     expect(formatWidgetStatusLabel("idle")).toBe("Pret");
     expect(formatWidgetStatusLabel("trip_active")).toBe("Trajet actif");
-    expect(formatWidgetStatusLabel("arrived")).toBe("Bien rentre");
+    expect(formatWidgetStatusLabel("arrived")).toBe("Bien rentré");
     expect(formatWidgetUpdatedAt("")).toBe("--:--");
     expect(formatWidgetUpdatedAt("invalid-date")).toBe("--:--");
     expect(formatWidgetUpdatedAt("2026-02-12T08:05:00.000Z")).toMatch(/^\d{2}:\d{2}$/);

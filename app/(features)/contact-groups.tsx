@@ -15,6 +15,7 @@ import {
 } from "../../src/lib/contacts/contactGroups";
 import type { NotifyMode } from "../../src/lib/contacts/notifyChannels";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 const NOTIFY_MODES: Array<{ key: NotifyMode; label: string }> = [
   { key: "auto", label: "Auto" },
@@ -101,7 +102,7 @@ export default function ContactGroupsScreen() {
       setProfiles(await getContactGroupProfiles());
       setSuccessMessage("Profils par defaut restaures.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Erreur de reinitialisation.");
+      setErrorMessage(error?.message ?? "Erreur de réinitialisation.");
     } finally {
       setSaving(false);
     }
@@ -193,7 +194,7 @@ export default function ContactGroupsScreen() {
                     }
                   />
                   <ToggleRow
-                    label="Confirmation d arrivee"
+                    label="Confirmation d arrivée"
                     enabled={profile.sendOnArrival}
                     onToggle={() =>
                       updateProfile(group.key, { sendOnArrival: !profile.sendOnArrival })
@@ -205,8 +206,8 @@ export default function ContactGroupsScreen() {
           })
         )}
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
 
         <TouchableOpacity
           className={`mt-6 rounded-2xl px-4 py-3 ${saving ? "bg-slate-300" : "bg-[#0F766E]"}`}

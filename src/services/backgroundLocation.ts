@@ -38,7 +38,7 @@ async function ensureTaskDefined() {
         accuracy: loc.coords.accuracy ?? null
       });
     } catch {
-      // Ignore les erreurs pour éviter de faire planter la tâche en arrière-plan.
+      // Ignore les erreurs pour éviter de faire planter la tâche en'arrière-plan.
     }
   });
 
@@ -47,7 +47,7 @@ async function ensureTaskDefined() {
 
 export async function startBackgroundTracking(sessionId: string) {
   if (isExpoGo()) {
-    throw new Error("Suivi en arriere-plan indisponible sur Expo Go.");
+    throw new Error("Suivi en'arriere-plan indisponible sur Expo Go.");
   }
   await ensureTaskDefined();
   const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;

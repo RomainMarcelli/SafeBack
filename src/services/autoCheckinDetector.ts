@@ -64,7 +64,7 @@ export async function startAutoCheckinDetector(options?: StartOptions): Promise<
           locationPermissionGranted = permission.status === "granted";
           options?.onInfo?.(
             locationPermissionGranted
-              ? "auto-checkin: permission localisation accordée"
+              ? "auto-checkin: permission localisation'accordée"
               : "auto-checkin: permission localisation refusée"
           );
         }

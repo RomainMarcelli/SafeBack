@@ -86,7 +86,7 @@ export async function upsertProfile(payload: {
   const session = await supabase.auth.getSession();
   const userId = payload.user_id ?? session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
   const { data, error } = await supabase
     .from("profiles")
@@ -234,7 +234,7 @@ export async function disableAllLiveShareSessions(): Promise<number> {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
   const { data, error } = await supabase
     .from("sessions")
@@ -295,7 +295,7 @@ export async function createIncidentReport(payload: {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
 
   const { data, error } = await supabase
@@ -321,7 +321,7 @@ export async function listIncidentReports(limit = 100): Promise<IncidentReport[]
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
 
   const { data, error } = await supabase

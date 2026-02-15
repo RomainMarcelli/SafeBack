@@ -54,6 +54,11 @@ export type GuardianWellbeingCheckResult = {
   has_recent_trip_24h?: boolean;
 };
 
+export type GuardianAssignmentRequestResult = {
+  sent: boolean;
+  status: "sent" | "already_guardian" | "already_requested" | "not_friend" | "unknown";
+};
+
 export type FriendWellbeingPingResult = {
   sent: boolean;
   status: "sent" | "already_pending" | "unknown";
@@ -83,7 +88,7 @@ export type SecurityTimelineEvent = {
 async function requireUserId(): Promise<string> {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
-  if (!userId) throw new Error("Utilisateur non authentifie.");
+  if (!userId) throw new Error("Utilisateur non'authentifie.");
   return userId;
 }
 
@@ -284,7 +289,7 @@ export async function sendArrivalSignalToGuardians(params?: {
     await sendConversationMessage({
       conversationId,
       messageType: "arrival",
-      body: params?.note?.trim() || "Je suis bien rentre.",
+      body: params?.note?.trim() || "Je suis bien rentré.",
       metadata: {
         event_type: "arrival_confirmation"
       }
@@ -319,7 +324,7 @@ export async function sendTripStartedSignalToGuardians(params: {
       })()
     : null;
   const body = etaLabel
-    ? `Je viens de lancer un trajet: ${params.fromAddress} -> ${params.toAddress}. Arrivee prevue vers ${etaLabel}.`
+    ? `Je viens de lancer un trajet: ${params.fromAddress} -> ${params.toAddress}. Arrivee prévue vers ${etaLabel}.`
     : `Je viens de lancer un trajet: ${params.fromAddress} -> ${params.toAddress}.`;
 
   let sent = 0;
@@ -500,7 +505,7 @@ export async function listSecurityTimelineEvents(limit = 100): Promise<SecurityT
         id: `arrival-${row.id}`,
         type: "arrival_confirmation",
         title: "Arrivee confirmee",
-        body: String(row.body ?? "Confirmation envoyee a tes garants."),
+        body: String(row.body ?? "Confirmation envoyée a tes garants."),
         created_at: String(row.created_at ?? new Date().toISOString()),
         data: metadata
       });
@@ -511,7 +516,7 @@ export async function listSecurityTimelineEvents(limit = 100): Promise<SecurityT
         id: `sos-${row.id}`,
         type: "sos",
         title: "SOS declenche",
-        body: String(row.body ?? "Alerte SOS envoyee."),
+        body: String(row.body ?? "Alerte SOS envoyée."),
         created_at: String(row.created_at ?? new Date().toISOString()),
         data: metadata
       });
@@ -522,7 +527,7 @@ export async function listSecurityTimelineEvents(limit = 100): Promise<SecurityT
         id: `battery-${row.id}`,
         type: "low_battery",
         title: "Batterie faible partagee",
-        body: String(row.body ?? "Alerte batterie faible envoyee aux garants."),
+        body: String(row.body ?? "Alerte batterie faible envoyée aux garants."),
         created_at: String(row.created_at ?? new Date().toISOString()),
         data: metadata
       });
@@ -544,7 +549,7 @@ export async function listSecurityTimelineEvents(limit = 100): Promise<SecurityT
     id: `delay-${row.id}`,
     type: "delay_check",
     title: String(row.title ?? "Demande de nouvelles"),
-    body: String(row.body ?? "Verification de retard."),
+    body: String(row.body ?? "Vérification de retard."),
     created_at: String(row.created_at ?? new Date().toISOString()),
     data: (row.data ?? {}) as Record<string, unknown>
   }));
@@ -581,6 +586,35 @@ export async function requestGuardianWellbeingCheck(
     status: normalizedStatus,
     has_recent_trip_24h:
       typeof raw.has_recent_trip_24h === "boolean" ? raw.has_recent_trip_24h : undefined
+  };
+}
+
+export async function requestGuardianAssignment(
+  targetUserId: string
+): Promise<GuardianAssignmentRequestResult> {
+  const target = targetUserId.trim();
+  if (!target) {
+    throw new Error("Utilisateur cible manquant.");
+  }
+
+  const { data, error } = await supabase.rpc("request_guardian_assignment", {
+    p_target_user_id: target
+  });
+  if (error) throw error;
+
+  const raw = (data ?? {}) as Record<string, unknown>;
+  const statusValue = String(raw.status ?? "unknown");
+  const normalizedStatus: GuardianAssignmentRequestResult["status"] =
+    statusValue === "sent" ||
+    statusValue === "already_guardian" ||
+    statusValue === "already_requested" ||
+    statusValue === "not_friend"
+      ? statusValue
+      : "unknown";
+
+  return {
+    sent: Boolean(raw.sent),
+    status: normalizedStatus
   };
 }
 

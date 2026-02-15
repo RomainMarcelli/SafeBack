@@ -55,6 +55,7 @@ import { logPrivacyEvent } from "../../src/lib/privacy/privacyCenter";
 import { supabase } from "../../src/lib/core/supabase";
 import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/trips/routing";
 import { sendTripStartedSignalToGuardians } from "../../src/lib/social/messagingDb";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -686,7 +687,7 @@ export default function SetupScreen() {
 
   const useCurrentLocation = async () => {
     const confirmed = await confirmAction({
-      title: "Utiliser ta position actuelle ?",
+      title: "Utiliser ta position'actuelle ?",
       message:
         "SafeBack va demander l'autorisation systeme de localisation pour renseigner ton point de depart.",
       confirmLabel: "Autoriser"
@@ -758,7 +759,7 @@ export default function SetupScreen() {
           setSimulatedMessages([]);
           setNotificationStatus("idle");
           setNotificationDetails(
-            "Trajet prepare hors ligne. Les alertes seront envoyees automatiquement des que la connexion revient."
+            "Trajet prepare hors ligne. Les alertes seront envoyées automatiquement des que la connexion revient."
           );
           setShowLaunchModal(true);
           return;
@@ -792,7 +793,7 @@ export default function SetupScreen() {
           });
           await logPrivacyEvent({
             type: "share_disabled",
-            message: "Partage live desactive au lancement du trajet.",
+            message: "Partage live désactive au lancement du trajet.",
             data: {
               session_id: session.id
             }
@@ -814,7 +815,7 @@ export default function SetupScreen() {
         const time = formatNowTime();
         const arrivalText =
           formatTimeParts(expectedHour, expectedMinute) ||
-          (routeResult ? `${routeResult.durationMinutes} min estimees` : "heure estimee inconnue");
+          (routeResult ? `${routeResult.durationMinutes} min'estimees` : "heure estimee inconnue");
         let guardiansNotifiedCount = 0;
         try {
           const guardianResult = await sendTripStartedSignalToGuardians({
@@ -827,7 +828,7 @@ export default function SetupScreen() {
         } catch {
           guardiansNotifiedCount = 0;
         }
-        const messageBody = `Je demarre mon trajet a ${time} vers ${normalizedTo}. Arrivee prevue : ${arrivalText}.${shareLiveLocation ? ` Partage de position active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
+        const messageBody = `Je démarre mon trajet a ${time} vers ${normalizedTo}. Arrivee prévue : ${arrivalText}.${shareLiveLocation ? ` Partage de position'active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
         const subject = `SafeBack - Demarrage trajet ${time}`;
         const resolvedGroupProfiles = groupProfiles ?? (await getContactGroupProfiles());
         const departureContacts = selectedContactItems.filter((contact) => {
@@ -920,7 +921,7 @@ export default function SetupScreen() {
             );
           }
           if (needsInAppAlert && messages.length === 0) {
-            notificationNotes.push("Aucun proche selectionne pour le canal application.");
+            notificationNotes.push("Aucun proche selectionne pour le canal'application.");
           }
         } else if (needsInAppAlert || safetyConfig.enabled) {
           const Notifications = await import("expo-notifications");
@@ -948,41 +949,72 @@ export default function SetupScreen() {
                 expectedArrivalIso: expected,
                 routeDurationMinutes: routeResult?.durationMinutes ?? null
               });
+              const modeLabel = (mode: string) => {
+                if (mode === "sms") return "SMS";
+                if (mode === "push") return "Push";
+                return "In-app";
+              };
+
               await Notifications.scheduleNotificationAsync({
                 content: {
-                  title: "SafeBack - Verification trajet",
-                  body: "Toujours pas rentre ? Confirme ton arrivee ou previens tes proches."
+                  title: `SafeBack - Niveau 1 (${modeLabel(safetyConfig.stageOneMode)})`,
+                  body: "Toujours pas rentré ? Confirme ton'arrivée ou préviens tes proches."
                 },
                 trigger: {
                   type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-                  seconds: schedule.reminderDelaySeconds,
+                  seconds: schedule.stageOneDelaySeconds,
                   repeats: false
                 }
               });
               await Notifications.scheduleNotificationAsync({
                 content: {
-                  title: "SafeBack - Escalade proches",
+                  title: `SafeBack - Niveau 2 (${modeLabel(safetyConfig.stageTwoMode)})`,
                   body:
                     delayAlertContacts.length > 0
-                      ? `Aucune confirmation. Pense a prevenir tes ${delayAlertContacts.length} proche(s).`
-                      : "Aucune confirmation. Ajoute des proches a prevenir pour activer l escalade."
+                      ? `Aucune confirmation. ${delayAlertContacts.length} proche(s) à prévenir.`
+                      : "Aucune confirmation. Ajoute des proches à prévenir pour activer l'escalade."
                 },
                 trigger: {
                   type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-                  seconds: schedule.closeContactsDelaySeconds,
+                  seconds: schedule.stageTwoDelaySeconds,
+                  repeats: false
+                }
+              });
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `SafeBack - Niveau 3 (${modeLabel(safetyConfig.stageThreeMode)})`,
+                  body:
+                    delayAlertContacts.length > 0
+                      ? `Escalade finale. Priorité haute: ${delayAlertContacts.length} proche(s).`
+                      : "Escalade finale. Aucun proche configuré pour ce trajet."
+                },
+                trigger: {
+                  type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                  seconds: schedule.stageThreeDelaySeconds,
                   repeats: false
                 }
               });
               appNotificationsScheduled = true;
               notificationNotes.push(
-                `Alertes planifiees: rappel a ${formatSafetyDelay(
-                  safetyConfig.reminderDelayMinutes
-                )}, escalation proches a ${formatSafetyDelay(
-                  safetyConfig.closeContactsDelayMinutes
-                )} (${delayAlertContacts.length} proche(s) concernes).`
+                `Escalade planifiée: N1 ${formatSafetyDelay(
+                  safetyConfig.stageOneDelayMinutes
+                )} (${modeLabel(safetyConfig.stageOneMode)}), N2 ${formatSafetyDelay(
+                  safetyConfig.stageTwoDelayMinutes
+                )} (${modeLabel(safetyConfig.stageTwoMode)}), N3 ${formatSafetyDelay(
+                  safetyConfig.stageThreeDelayMinutes
+                )} (${modeLabel(safetyConfig.stageThreeMode)}). ${delayAlertContacts.length} proche(s) concerné(s).`
               );
+              if (safetyConfig.secureArrivalEnabled) {
+                notificationNotes.push(
+                  `Preuve d'arrivée renforcée active: durée mini ${formatSafetyDelay(
+                    safetyConfig.secureArrivalMinTripMinutes
+                  )}${
+                    safetyConfig.secureArrivalRequireCharging ? ", charge requise" : ""
+                  }${safetyConfig.secureArrivalRequireLocation ? ", position requise" : ""}.`
+                );
+              }
             } else {
-              notificationNotes.push("Alertes de retard desactivees dans les reglages.");
+              notificationNotes.push("Alertes de retard désactivées dans les réglages.");
             }
           } else {
             notificationBlocked = true;
@@ -1009,7 +1041,7 @@ export default function SetupScreen() {
         if (dispatchEntries.length > 0) {
           dispatchSummary.push(
             `Profils groupes: ${
-              useGroupProfiles ? "actifs" : "desactives"
+              useGroupProfiles ? "actifs" : "désactives"
             } (${dispatchEntries
               .map((entry) => `${notifyModeLabel(entry.mode)}: ${entry.contacts.length}`)
               .join(" | ")}).`
@@ -1020,7 +1052,7 @@ export default function SetupScreen() {
         }
         dispatchSummary.push(...notificationNotes);
         if (dispatchSummary.length === 0) {
-          dispatchSummary.push("Aucun canal d envoi disponible.");
+          dispatchSummary.push("Aucun canal d'envoi disponible.");
         }
         if (guardiansNotifiedCount > 0) {
           dispatchSummary.push(
@@ -1112,7 +1144,7 @@ export default function SetupScreen() {
               onPress={resetForm}
             >
               <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">
-                Reinitialiser
+                Réinitialiser
               </Text>
             </TouchableOpacity>
           </View>
@@ -1130,7 +1162,7 @@ export default function SetupScreen() {
                 onPress={useCurrentLocation}
               >
                 <Text className="text-xs font-semibold text-emerald-700">
-                  Position actuelle
+                  Position'actuelle
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1239,7 +1271,7 @@ export default function SetupScreen() {
               </View>
             </View>
             <Text className="mt-2 text-xs uppercase tracking-widest text-amber-700">
-              Point d arrivee
+              Point d arrivée
             </Text>
 
             <View className="mt-3 flex-row gap-2">
@@ -1312,7 +1344,7 @@ export default function SetupScreen() {
               </View>
             ) : (
               <AddressInput
-                label="Adresse d arrivee"
+                label="Adresse d arrivée"
                 value={toAddress}
                 onChange={setToAddress}
                 onSelect={setToAddress}
@@ -1338,7 +1370,7 @@ export default function SetupScreen() {
               </View>
             ) : canLaunch ? (
               <Text className="mt-4 text-xs font-semibold text-amber-700">
-                Impossible de calculer le trajet. Verifie les adresses.
+                Impossible de calculer le trajet. Vérifie les adresses.
               </Text>
             ) : null}
           </View>
@@ -1456,7 +1488,7 @@ export default function SetupScreen() {
           <View className="mt-8 flex-row items-end justify-between">
             <View>
               <Text className="text-2xl font-extrabold text-[#0F172A]">
-                Contacts a prevenir
+                Contacts a prévenir
               </Text>
               <Text className="mt-1 text-sm text-[#475569]">
                 Choisis qui recoit le message de depart.
@@ -1501,10 +1533,10 @@ export default function SetupScreen() {
 
           <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
             <Text className="text-xs uppercase tracking-widest text-slate-500">
-              Type d envoi aux proches
+              Type d'envoi aux proches
             </Text>
             <Text className="mt-2 text-sm text-slate-600">
-              Choisis comment prevenir tes proches au depart.
+              Choisis comment prévenir tes proches au depart.
             </Text>
             <TouchableOpacity
               className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -1729,14 +1761,12 @@ export default function SetupScreen() {
           ) : null}
         </Animated.View>
 
-        {errorMessage ? (
-          <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
 
         {simulatedMessages.length > 0 ? (
           <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
             <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-              Simulation d envoi (DEV / TEST)
+              Simulation d'envoi (DEV / TEST)
             </Text>
             <Text className="mt-2 text-sm text-slate-600">
               Envoi configure: {useGroupProfiles ? "Profils de groupes" : notifyModeLabel(notifyMode)}.
@@ -1764,7 +1794,7 @@ export default function SetupScreen() {
                   ? "Notifications refusees sur cet appareil."
                   : notificationStatus === "expo-go"
                     ? "Notifications locales non supportees dans Expo Go."
-                    : "Notification locale non envoyee."}
+                    : "Notification locale non envoyée."}
             </Text>
             {notificationDetails ? (
               <Text className="mt-2 text-xs text-slate-500">{notificationDetails}</Text>
@@ -1801,13 +1831,13 @@ export default function SetupScreen() {
         <View className="flex-1 items-center justify-center bg-black/45 px-6">
           <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
             <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
-              Assistant - Etape 5
+              Assistant - Étape 5
             </Text>
             <Text className="mt-2 text-xl font-extrabold text-cyan-950">
               Lance ton premier trajet
             </Text>
             <Text className="mt-2 text-sm text-cyan-900/80">
-              Renseigne depart + destination, puis appuie sur 'Lancer le trajet'. Des que c est
+              Renseigne depart + destination, puis appuie sur 'Lancer le trajet'. Des que c'est
               lance, le parcours de prise en main se termine automatiquement.
             </Text>
             <View className="mt-4 rounded-2xl border border-cyan-200 bg-white px-3 py-3">
@@ -1885,7 +1915,7 @@ export default function SetupScreen() {
       <Modal transparent visible={showTimePicker} animationType="fade">
         <View className="flex-1 items-center justify-center bg-black/40 px-6">
           <View className="w-full rounded-3xl bg-[#FFFDF9] p-6 shadow-lg">
-            <Text className="text-xl font-extrabold text-[#0F172A]">Heure d arrivee</Text>
+            <Text className="text-xl font-extrabold text-[#0F172A]">Heure d arrivée</Text>
             <Text className="mt-1 text-sm text-slate-600">
               Fais glisser pour definir l heure et les minutes.
             </Text>

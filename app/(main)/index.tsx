@@ -31,14 +31,24 @@ import {
   type OnboardingState
 } from "../../src/lib/home/onboarding";
 import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/contacts/predefinedMessage";
+import { getAutoCheckinConfig } from "../../src/lib/safety/autoCheckins";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { getThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
 
 type TutorialStep = {
   id: OnboardingStepId;
   title: string;
   description: string;
   ctaLabel: string;
-  href: "/account" | "/favorites" | "/safety-alerts" | "/setup";
+  href:
+    | "/account"
+    | "/favorites"
+    | "/safety-alerts"
+    | "/friends-map"
+    | "/auto-checkins"
+    | "/guardian-dashboard"
+    | "/setup";
   manual?: boolean;
 };
 
@@ -60,31 +70,67 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: "contacts",
     title: "Ajouter tes proches de confiance",
-    description: "Ils seront prevenus automatiquement au depart et en cas de retard.",
+    description: "Ils seront prévenus automatiquement au depart et en cas de retard.",
     ctaLabel: "Ajouter mes contacts",
     href: "/favorites"
   },
   {
     id: "safety_review",
-    title: "Regler les alertes de securite",
+    title: "Regler les alertes de sécurité",
     description: "Choisis quand SafeBack te relance et quand escalader vers tes proches.",
-    ctaLabel: "Ouvrir les reglages securite",
+    ctaLabel: "Ouvrir les réglages sécurité",
     href: "/safety-alerts",
+    manual: true
+  },
+  {
+    id: "friends_map",
+    title: "Paramétrer la carte des proches",
+    description: "Choisis si tu veux apparaître sur la carte et configure ton icône de présence.",
+    ctaLabel: "Configurer ma visibilité carte",
+    href: "/friends-map",
+    manual: true
+  },
+  {
+    id: "auto_checkins",
+    title: "Configurer les arrivées automatiques",
+    description: "Ajoute une règle maison/travail pour confirmer ton arrivée automatiquement.",
+    ctaLabel: "Configurer les arrivées auto",
+    href: "/auto-checkins",
+    manual: true
+  },
+  {
+    id: "guardian_dashboard",
+    title: "Tester le dashboard proches",
+    description: "Vérifie la vue côté proche: statuts, demandes bien-arrivé et co-pilote.",
+    ctaLabel: "Ouvrir le dashboard proches",
+    href: "/guardian-dashboard",
     manual: true
   },
   {
     id: "first_trip",
     title: "Lancer ton premier trajet",
     description: "Un premier trajet valide toute la chaine d alertes et de suivi.",
-    ctaLabel: "Demarrer un trajet",
+    ctaLabel: "Démarrer un trajet",
     href: "/setup"
   }
 ];
+
+const STEP_ESTIMATED_MINUTES: Record<OnboardingStepId, number> = {
+  profile: 1,
+  favorites: 1,
+  contacts: 1,
+  safety_review: 1,
+  friends_map: 1,
+  auto_checkins: 1,
+  guardian_dashboard: 1,
+  first_trip: 2
+};
 
 type OnboardingChecklist = {
   profile: boolean;
   favorites: boolean;
   contacts: boolean;
+  auto_checkins: boolean;
   first_trip: boolean;
 };
 
@@ -101,6 +147,7 @@ export default function HomeScreen() {
     profile: false,
     favorites: false,
     contacts: false,
+    auto_checkins: false,
     first_trip: false
   });
   const [onboardingReady, setOnboardingReady] = useState(false);
@@ -109,6 +156,7 @@ export default function HomeScreen() {
   const [showHubModal, setShowHubModal] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [guideActionBusy, setGuideActionBusy] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -123,11 +171,24 @@ export default function HomeScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    getThemeMode()
+      .then(setThemeMode)
+      .catch(() => setThemeMode("light"));
+  }, []);
+
   const isStepDone = (stepId: TutorialStep["id"]) => {
     if (stepId === "profile") return onboardingChecklist.profile;
     if (stepId === "favorites") return onboardingChecklist.favorites;
     if (stepId === "contacts") return onboardingChecklist.contacts;
+    if (stepId === "auto_checkins") return onboardingChecklist.auto_checkins;
     if (stepId === "first_trip") return onboardingChecklist.first_trip;
+    if (stepId === "friends_map") {
+      return onboardingState?.manualDone.includes("friends_map") ?? false;
+    }
+    if (stepId === "guardian_dashboard") {
+      return onboardingState?.manualDone.includes("guardian_dashboard") ?? false;
+    }
     if (stepId === "safety_review") {
       return onboardingState?.manualDone.includes("safety_review") ?? false;
     }
@@ -140,7 +201,16 @@ export default function HomeScreen() {
   );
   const totalStepCount = TUTORIAL_STEPS.length;
   const onboardingPercent = Math.round((completedStepCount / totalStepCount) * 100);
+  const remainingEstimatedMinutes = useMemo(
+    () =>
+      TUTORIAL_STEPS.filter((step) => !isStepDone(step.id)).reduce(
+        (sum, step) => sum + STEP_ESTIMATED_MINUTES[step.id],
+        0
+      ),
+    [onboardingChecklist, onboardingState]
+  );
   const onboardingComplete = onboardingState?.completed || completedStepCount === totalStepCount;
+  const darkMode = themeMode === "dark";
   const currentStep = TUTORIAL_STEPS[tutorialStepIndex] ?? TUTORIAL_STEPS[0];
   const currentStepDone = isStepDone(currentStep.id);
   const primaryHubItems = useMemo(() => getPrimaryHomeHubItems(4), []);
@@ -155,11 +225,16 @@ export default function HomeScreen() {
     if (item.href === "/friends-map") return "map-outline";
     if (item.href === "/safety-alerts") return "shield-checkmark-outline";
     if (item.href === "/auto-checkins") return "flash-outline";
+    if (item.href === "/guardian-dashboard") return "people-circle-outline";
+    if (item.href === "/live-companion") return "pulse-outline";
+    if (item.href === "/safety-drill") return "flask-outline";
     if (item.href === "/forgotten-trip") return "location-outline";
     if (item.href === "/notifications") return "notifications-outline";
     if (item.href === "/incident-report") return "document-text-outline";
     if (item.href === "/incidents") return "documents-outline";
     if (item.href === "/privacy-center") return "shield-outline";
+    if (item.href === "/accessibility") return "accessibility-outline";
+    if (item.href === "/voice-assistant") return "mic-outline";
     if (item.href === "/features-guide") return "book-outline";
     return "sparkles-outline";
   };
@@ -176,12 +251,13 @@ export default function HomeScreen() {
 
   const refreshOnboarding = useCallback(async (currentUserId: string) => {
     try {
-      const [state, profile, addresses, contacts, sessions] = await Promise.all([
+      const [state, profile, addresses, contacts, sessions, autoCheckins] = await Promise.all([
         getOnboardingState(currentUserId),
         getProfile(),
         listFavoriteAddresses(),
         listContacts(),
-        listSessions()
+        listSessions(),
+        getAutoCheckinConfig()
       ]);
 
       const hasIdentity = Boolean(
@@ -194,14 +270,21 @@ export default function HomeScreen() {
         profile: hasIdentity && hasPhone,
         favorites: addresses.length > 0,
         contacts: contacts.length > 0,
+        auto_checkins: autoCheckins.rules.length > 0,
         first_trip: sessions.length > 0
       };
 
       const safetyDone = state.manualDone.includes("safety_review");
+      const friendsMapDone = state.manualDone.includes("friends_map");
+      const guardianDashboardDone = state.manualDone.includes("guardian_dashboard");
+      const autoCheckinDone = nextChecklist.auto_checkins || state.manualDone.includes("auto_checkins");
       const shouldComplete =
         nextChecklist.profile &&
         nextChecklist.favorites &&
         nextChecklist.contacts &&
+        friendsMapDone &&
+        autoCheckinDone &&
+        guardianDashboardDone &&
         nextChecklist.first_trip &&
         safetyDone;
 
@@ -300,11 +383,11 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
-      <StatusBar style="dark" />
-      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
-      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
-      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+    <SafeAreaView style={{ flex: 1, backgroundColor: darkMode ? "#0B1220" : "#F7F2EA" }}>
+      <StatusBar style={darkMode ? "light" : "dark"} />
+      <View className={`absolute -top-24 -right-16 h-56 w-56 rounded-full ${darkMode ? "bg-slate-800 opacity-60" : "bg-[#FAD4A6] opacity-70"}`} />
+      <View className={`absolute top-32 -left-28 h-72 w-72 rounded-full ${darkMode ? "bg-slate-700 opacity-50" : "bg-[#BFE9D6] opacity-60"}`} />
+      <View className={`absolute bottom-24 -right-32 h-72 w-72 rounded-full ${darkMode ? "bg-slate-900 opacity-60" : "bg-[#C7DDF8] opacity-40"}`} />
 
       <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
         <View className="mt-6 flex-row items-center justify-between">
@@ -322,8 +405,8 @@ export default function HomeScreen() {
           </Link>
         </View>
 
-        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">SafeBack</Text>
-        <Text className="mt-2 text-base text-[#475569]">
+        <Text className={`mt-6 text-4xl font-extrabold ${darkMode ? "text-slate-100" : "text-[#0F172A]"}`}>SafeBack</Text>
+        <Text className={`mt-2 text-base ${darkMode ? "text-slate-300" : "text-[#475569]"}`}>
           Lance rapidement un trajet, suis ta position et garde tes proches informes.
         </Text>
 
@@ -349,7 +432,7 @@ export default function HomeScreen() {
               Application presque prete
             </Text>
             <Text className="mt-1 text-sm text-cyan-900/80">
-              Suis le guide et finalise ta configuration en quelques etapes.
+              Suis le guide et finalise ta configuration en quelques étapes.
             </Text>
             <View className="mt-4 h-2 overflow-hidden rounded-full bg-cyan-100">
               <View
@@ -358,7 +441,10 @@ export default function HomeScreen() {
               />
             </View>
             <Text className="mt-2 text-xs font-semibold text-cyan-900">
-              {completedStepCount}/{totalStepCount} etapes completees
+              {completedStepCount}/{totalStepCount} étapes completees
+            </Text>
+            <Text className="mt-1 text-xs text-cyan-800">
+              Temps restant estimé : {Math.max(1, remainingEstimatedMinutes)} min
             </Text>
             <TouchableOpacity
               className="mt-4 rounded-2xl bg-[#0f172a] px-4 py-3"
@@ -373,9 +459,9 @@ export default function HomeScreen() {
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Action principale</Text>
-          <Text className="mt-2 text-2xl font-bold text-slate-900">Demarrer un trajet</Text>
+          <Text className="mt-2 text-2xl font-bold text-slate-900">Démarrer un trajet</Text>
           <Text className="mt-2 text-sm text-slate-600">
-            Prepare ton depart, ta destination et les contacts a prevenir.
+            Prepare ton depart, ta destination et les contacts a prévenir.
           </Text>
 
           <Link href="/setup" asChild>
@@ -389,7 +475,7 @@ export default function HomeScreen() {
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Widget accueil</Text>
           <Text className="mt-2 text-sm text-slate-600">
-            Actions rapides en 1 clic sans passer par plusieurs ecrans.
+            Actions rapides en 1 clic sans passer par plusieurs écrans.
           </Text>
           <View className="mt-3 flex-row gap-2">
             <Link href="/setup" asChild>
@@ -410,12 +496,12 @@ export default function HomeScreen() {
                   await clearActiveSessionId();
                   await syncSafeBackHomeWidget({
                     status: "arrived",
-                    note: "Confirmation envoyee",
+                    note: "Confirmation envoyée",
                     updatedAtIso: new Date().toISOString()
                   });
                   setQuickInfo(formatQuickArrivalMessage(result.conversations));
                 } catch (error: any) {
-                  setQuickError(error?.message ?? "Impossible d envoyer la confirmation rapide.");
+                  setQuickError(error?.message ?? "Impossible d envoyér la confirmation rapide.");
                 } finally {
                   setQuickBusy(false);
                 }
@@ -423,7 +509,7 @@ export default function HomeScreen() {
               disabled={quickBusy}
             >
               <Text className="text-center text-sm font-semibold text-white">
-                {quickBusy ? "Envoi..." : "Je suis bien rentre"}
+                {quickBusy ? "Envoi..." : "Je suis bien rentré"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -443,8 +529,8 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </Link>
           </View>
-          {quickInfo ? <Text className="mt-3 text-sm text-emerald-700">{quickInfo}</Text> : null}
-          {quickError ? <Text className="mt-3 text-sm text-red-600">{quickError}</Text> : null}
+          {quickInfo ? <FeedbackMessage kind="info" message={quickInfo} compact /> : null}
+          {quickError ? <FeedbackMessage kind="error" message={quickError} compact /> : null}
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -494,8 +580,8 @@ export default function HomeScreen() {
               On configure tout ensemble ?
             </Text>
             <Text className="mt-2 text-sm text-slate-700">
-              En 3 minutes, je te guide pour activer les reglages essentiels et etre pret(e) des ton
-              premier trajet.
+              En quelques minutes, je te guide pour activer les réglages essentiels et être prêt(e)
+              dès ton premier trajet.
             </Text>
 
             <View className="mt-6 flex-row gap-3">
@@ -537,7 +623,7 @@ export default function HomeScreen() {
                   Guide de configuration
                 </Text>
                 <Text className="mt-1 text-2xl font-extrabold text-[#0F172A]">
-                  Etape {tutorialStepIndex + 1} / {totalStepCount}
+                  Étape {tutorialStepIndex + 1} / {totalStepCount}
                 </Text>
               </View>
               <TouchableOpacity
@@ -558,12 +644,15 @@ export default function HomeScreen() {
             </View>
 
             <View className="mt-5 rounded-3xl border border-[#E7E0D7] bg-white p-5 shadow-sm">
-              <Text className="text-xs uppercase tracking-widest text-slate-500">Etape actuelle</Text>
+              <Text className="text-xs uppercase tracking-widest text-slate-500">Étape actuelle</Text>
               <Text className="mt-2 text-xl font-bold text-slate-900">{currentStep.title}</Text>
               <Text className="mt-2 text-sm text-slate-600">{currentStep.description}</Text>
+              <Text className="mt-2 text-xs text-slate-500">
+                Durée estimée : {STEP_ESTIMATED_MINUTES[currentStep.id]} min
+              </Text>
               {currentStepDone ? (
                 <View className="mt-3 self-start rounded-full bg-emerald-100 px-3 py-1">
-                  <Text className="text-xs font-semibold text-emerald-700">Etape validee</Text>
+                  <Text className="text-xs font-semibold text-emerald-700">Étape validee</Text>
                 </View>
               ) : null}
             </View>
@@ -589,7 +678,7 @@ export default function HomeScreen() {
                         active ? "text-cyan-900" : done ? "text-emerald-800" : "text-slate-700"
                       }`}
                     >
-                      {step.title}
+                      {step.title} {done ? "· Fait" : ""}
                     </Text>
                     <Ionicons
                       name={active ? "play-circle" : done ? "checkmark-circle" : "ellipse-outline"}

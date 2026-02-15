@@ -300,7 +300,7 @@ describe("messagingDb", () => {
       return { data: null, error: null };
     };
 
-    const result = await sendArrivalSignalToGuardians({ note: "Je suis bien rentre." });
+    const result = await sendArrivalSignalToGuardians({ note: "Je suis bien rentré." });
 
     expect(result).toEqual({ conversations: 2 });
     const rpcCalls = state.calls.filter(
@@ -461,7 +461,7 @@ describe("messagingDb", () => {
         {
           id: "m-arrival",
           message_type: "arrival",
-          body: "Je suis bien rentre.",
+          body: "Je suis bien rentré.",
           metadata: { event_type: "arrival_confirmation" },
           created_at: "2026-02-14T19:00:00.000Z"
         },

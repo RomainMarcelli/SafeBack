@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { Link, Redirect } from "expo-router";
+import { Link, Redirect, useLocalSearchParams } from "expo-router";
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -15,14 +15,20 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithCredentials } from "../../src/lib/auth/authFlows";
+import { toSignInErrorFr, type SignInErrorUi } from "../../src/lib/auth/signInErrorFr";
+import { AuthErrorCard } from "../../src/components/AuthErrorCard";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 export default function AuthScreen() {
+  const params = useLocalSearchParams<{ signup?: string; email?: string }>();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [signInError, setSignInError] = useState<SignInErrorUi | null>(null);
+  const [infoMessage, setInfoMessage] = useState("");
+  const [resending, setResending] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -39,6 +45,17 @@ export default function AuthScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (params.signup !== "1") return;
+    const emailParam = String(params.email ?? "").trim();
+    if (emailParam.length > 0 && !identifier) {
+      setIdentifier(emailParam);
+    }
+    setInfoMessage(
+      "Compte créé. Confirme d'abord ton email puis connecte-toi."
+    );
+  }, [params.signup, params.email, identifier]);
+
   if (!checking && userId) {
     return <Redirect href="/" />;
   }
@@ -47,12 +64,42 @@ export default function AuthScreen() {
     try {
       Keyboard.dismiss();
       setSaving(true);
-      setErrorMessage("");
+      setSignInError(null);
+      setInfoMessage("");
       await signInWithCredentials({ identifier, password });
-    } catch (error: any) {
-      setErrorMessage(error?.message ?? "Erreur de connexion.");
+    } catch (error: unknown) {
+      setSignInError(toSignInErrorFr(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const resendConfirmationEmail = async () => {
+    const targetEmail = identifier.trim();
+    if (!targetEmail.includes("@")) {
+      setSignInError({
+        kind: "email_not_confirmed",
+        title: "Email requis",
+        message: "Entre ton adresse email exacte pour renvoyer la confirmation.",
+        hint: "Le renvoi ne fonctionne pas avec un username.",
+        code: undefined
+      });
+      return;
+    }
+
+    try {
+      setResending(true);
+      setInfoMessage("");
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: targetEmail
+      });
+      if (error) throw error;
+      setInfoMessage("Email de confirmation renvoyé. Vérifie tes spams si besoin.");
+    } catch (error: any) {
+      setSignInError(toSignInErrorFr(error));
+    } finally {
+      setResending(false);
     }
   };
 
@@ -139,9 +186,29 @@ export default function AuthScreen() {
             </TouchableOpacity>
           </View>
 
-          {errorMessage ? (
-            <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text>
+          {signInError ? (
+            <AuthErrorCard
+              contextLabel="Connexion"
+              title={signInError.title}
+              message={signInError.message}
+              hint={signInError.hint}
+              code={signInError.code}
+            />
           ) : null}
+          {signInError?.kind === "email_not_confirmed" ? (
+            <TouchableOpacity
+              className={`mt-3 rounded-2xl border border-amber-200 px-4 py-3 ${
+                resending ? "bg-amber-100" : "bg-amber-50"
+              }`}
+              onPress={resendConfirmationEmail}
+              disabled={resending}
+            >
+              <Text className="text-center text-sm font-semibold text-amber-800">
+                {resending ? "Envoi..." : "Renvoyer l'email de confirmation"}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          {infoMessage ? <FeedbackMessage kind="info" message={infoMessage} compact /> : null}
 
           <TouchableOpacity
             className={`mt-5 rounded-2xl px-4 py-4 ${

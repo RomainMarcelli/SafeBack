@@ -1,4 +1,4 @@
-// Couche de donnees pour la carte des proches: presence reseau, position et statut lisible UI.
+// Couche de données pour la carte des proches: presence reseau, position et statut lisible UI.
 import { supabase } from "../core/supabase";
 import { getFriendOnlineState, normalizeMarkerEmoji, type FriendOnlineState } from "./friendMapStatus";
 
@@ -17,7 +17,7 @@ export { getFriendOnlineState, normalizeMarkerEmoji, type FriendOnlineState };
 async function requireUserId(): Promise<string> {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
-  if (!userId) throw new Error("Utilisateur non authentifie.");
+  if (!userId) throw new Error("Utilisateur non'authentifie.");
   return userId;
 }
 

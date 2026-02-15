@@ -1,4 +1,4 @@
-// Helper de message d'invitation ami pour un partage plus clair et plus premium.
+// Helper de message d'invitation'ami pour un partage plus clair et plus premium.
 export function buildFriendInviteMessage(params: {
   publicId: string;
   appName?: string;
@@ -10,7 +10,7 @@ export function buildFriendInviteMessage(params: {
 
   const header = `Hey, on se connecte sur ${appName} ?`;
   const body =
-    "Je t'ajoute en proche de confiance pour les trajets (arrivee, SOS, verification rapide).";
+    "Je t'ajoute en proche de confiance pour les trajets (arrivée, SOS, vérification rapide).";
   const idLine = publicId ? `Mon identifiant: ${publicId}` : "Mon identifiant: (indisponible)";
   const hint = "Ouvre l'app > Reseau proches > Rechercher un profil.";
   const personalNote = note ? `\nMessage perso: ${note}` : "";

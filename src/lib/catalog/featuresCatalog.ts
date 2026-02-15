@@ -37,6 +37,14 @@ export const FEATURE_SECTIONS: FeatureSection[] = [
         route: "/trips"
       },
       {
+        id: "smart-checkin",
+        title: "Check-in visuel intelligent",
+        description:
+          "Une carte flottante apparaît en bas de l'écran'après détection d'arrêt proche de l'arrivée.",
+        howTo: "Lance un trajet, reste immobile près de la destination puis valide en 1 clic.",
+        route: "/trips"
+      },
+      {
         id: "trip-history",
         title: "Historique sécurité",
         description: "Timeline des trajets, retards, SOS et confirmations d'arrivée.",
@@ -61,16 +69,30 @@ export const FEATURE_SECTIONS: FeatureSection[] = [
       {
         id: "delay-alerts",
         title: "Alertes de retard",
-        description: "Relance automatique utilisateur puis escalade vers les proches.",
-        howTo: "Compte -> Alertes, choisir les délais puis Enregistrer.",
+        description: "Escalade configurable en 3 niveaux (in-app, push, SMS) avec délais personnalisés.",
+        howTo: "Compte -> Alertes sécurité, régler N1/N2/N3 puis Enregistrer.",
+        route: "/safety-alerts"
+      },
+      {
+        id: "secure-arrival-proof",
+        title: "Preuve d'arrivée sécurisée",
+        description: "Validation d'arrivée renforcée: position, charge et durée minimale optionnelles.",
+        howTo: "Compte -> Alertes sécurité -> activer Preuve d'arrivée sécurisée.",
         route: "/safety-alerts"
       },
       {
         id: "guardian-check",
         title: "Demande de nouvelles par garant",
-        description: "Un garant peut demander si tu es bien rentré selon ton autorisation.",
+        description: "Un garant peut demander si tu es bien rentré selon ton'autorisation.",
         howTo: "Compte -> Alertes -> activer Vérification par les garants.",
         route: "/safety-alerts"
+      },
+      {
+        id: "security-inbox",
+        title: "Inbox sécurité priorisée",
+        description: "Les notifications sont classées en Urgent, Important et Info.",
+        howTo: "Centre d'alertes -> utiliser les filtres de priorité en haut de page.",
+        route: "/notifications"
       },
       {
         id: "sos",
@@ -114,6 +136,20 @@ export const FEATURE_SECTIONS: FeatureSection[] = [
         description: "Assigner un garant pour recevoir les notifications clés.",
         howTo: "Compte -> Amis, puis gérer les demandes et garants.",
         route: "/friends"
+      },
+      {
+        id: "guardian-dashboard",
+        title: "Tableau de bord proches",
+        description: "Vue dédiée côté proche: statuts, présence réseau et actions rapides.",
+        howTo: "Accueil -> Voir tout -> Dashboard proches.",
+        route: "/guardian-dashboard"
+      },
+      {
+        id: "live-companion",
+        title: "Mode accompagnement direct",
+        description: "Co-pilote avec checkpoints, messages pré-remplis et rappel ETA.",
+        howTo: "Dashboard proches -> ouvrir le mode co-pilote pour la personne suivie.",
+        route: "/live-companion"
       },
       {
         id: "auto-checkins",
@@ -192,7 +228,7 @@ export const FEATURE_SECTIONS: FeatureSection[] = [
       {
         id: "quick-arrival",
         title: "Je suis bien rentré",
-        description: "Confirme immédiatement ton arrivée aux garants.",
+        description: "Confirme immédiatement ton'arrivée aux garants.",
         howTo: "Action rapide Bien rentré ou écran dédié.",
         route: "/quick-arrival"
       },
@@ -202,6 +238,20 @@ export const FEATURE_SECTIONS: FeatureSection[] = [
         description: "Journal des partages/permissions et reset global en 1 clic.",
         howTo: "Aide ou Compte -> Centre de confidentialité.",
         route: "/privacy-center"
+      },
+      {
+        id: "safety-drill",
+        title: "Simulation de crise",
+        description: "Teste un faux SOS/faux retard pour vérifier la chaîne sans urgence réelle.",
+        howTo: "Accueil -> Voir tout -> Simulation de crise, puis choisir un exercice.",
+        route: "/safety-drill"
+      },
+      {
+        id: "accessibility",
+        title: "Accessibilité renforcée",
+        description: "Mode haute lisibilité, taille de texte, haptique et assistant vocal.",
+        howTo: "Compte -> Accessibilité, puis active les options qui te conviennent.",
+        route: "/accessibility"
       }
     ]
   }

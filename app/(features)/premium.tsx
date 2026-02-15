@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getPremium, setPremium } from "../../src/lib/subscription/premium";
+import { getPremium, setPremium } from "../../src/lib/subscription/premiumStorage";
 import { supabase } from "../../src/lib/core/supabase";
 
 export default function PremiumScreen() {
@@ -84,7 +84,7 @@ export default function PremiumScreen() {
             <Text className="text-xs font-semibold uppercase text-slate-400">Free</Text>
             <Text className="mt-2 text-sm text-slate-700">- Creation de trajet</Text>
             <Text className="mt-1 text-sm text-slate-700">
-              - Simulation d envoi (DEV / TEST)
+              - Simulation d'envoi (DEV / TEST)
             </Text>
             <Text className="mt-1 text-sm text-slate-700">
               - Favoris adresses et contacts
@@ -99,7 +99,7 @@ export default function PremiumScreen() {
               - Carte temps reel + itineraire
             </Text>
             <Text className="mt-1 text-sm text-emerald-800">
-              - Envoi SMS reel pour prevenir un proche
+              - Envoi SMS reel pour prévenir un proche
             </Text>
           </View>
         </View>
@@ -144,4 +144,3 @@ export default function PremiumScreen() {
     </SafeAreaView>
   );
 }
-

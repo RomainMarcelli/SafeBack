@@ -327,6 +327,213 @@ to anon, authenticated;
 
 commit;
 
+begin;
+
+create or replace function public.delete_my_account()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_user_id uuid;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  delete from public.friend_wellbeing_pings
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  delete from public.friend_map_presence
+  where user_id = v_user_id;
+
+  delete from public.guardianships
+  where owner_user_id = v_user_id
+     or guardian_user_id = v_user_id;
+
+  delete from public.friendships
+  where user_id = v_user_id
+     or friend_user_id = v_user_id;
+
+  delete from public.friend_requests
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  delete from public.messages
+  where sender_user_id = v_user_id;
+
+  delete from public.conversation_participants
+  where user_id = v_user_id;
+
+  delete from public.incident_reports
+  where user_id = v_user_id;
+
+  delete from public.app_notifications
+  where user_id = v_user_id;
+
+  delete from public.locations
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.session_contacts
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.sessions
+  where user_id = v_user_id;
+
+  delete from public.contacts
+  where user_id = v_user_id;
+
+  delete from public.favorite_addresses
+  where user_id = v_user_id;
+
+  delete from public.profiles
+  where user_id = v_user_id;
+
+  delete from auth.identities where user_id = v_user_id;
+  delete from auth.sessions where user_id = v_user_id;
+  delete from auth.users where id = v_user_id;
+
+  return jsonb_build_object('deleted', true);
+end;
+$$;
+
+grant execute on function public.delete_my_account() to authenticated;
+
+commit;
+
+begin;
+
+create or replace function public.request_guardian_assignment(
+  p_target_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_already_guardian boolean;
+  v_are_friends boolean;
+  v_already_requested boolean;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  if p_target_user_id is null then
+    raise exception 'Proche cible manquant';
+  end if;
+
+  if p_target_user_id = v_user_id then
+    raise exception 'Impossible de demander soi-meme';
+  end if;
+
+  select exists (
+    select 1
+    from public.guardianships g
+    where g.owner_user_id = v_user_id
+      and g.guardian_user_id = p_target_user_id
+      and g.status = 'active'
+  )
+  into v_already_guardian;
+
+  if v_already_guardian then
+    return jsonb_build_object('sent', false, 'status', 'already_guardian');
+  end if;
+
+  select exists (
+    select 1
+    from public.friendships f
+    where f.user_id = v_user_id
+      and f.friend_user_id = p_target_user_id
+  )
+  into v_are_friends;
+
+  if not v_are_friends then
+    return jsonb_build_object('sent', false, 'status', 'not_friend');
+  end if;
+
+  select exists (
+    select 1
+    from public.app_notifications n
+    where n.user_id = p_target_user_id
+      and n.notification_type = 'guardian_assignment_request'
+      and (n.data ->> 'owner_user_id')::uuid = v_user_id
+      and n.created_at >= now() - interval '12 hours'
+  )
+  into v_already_requested;
+
+  if v_already_requested then
+    return jsonb_build_object('sent', false, 'status', 'already_requested');
+  end if;
+
+  insert into public.app_notifications (user_id, notification_type, title, body, data)
+  values (
+    p_target_user_id,
+    'guardian_assignment_request',
+    'Demande de garant',
+    'Un proche souhaite que tu deviennes son garant sur SafeBack.',
+    jsonb_build_object(
+      'owner_user_id', v_user_id,
+      'target_user_id', p_target_user_id
+    )
+  );
+
+  insert into public.app_notifications (user_id, notification_type, title, body, data)
+  values (
+    v_user_id,
+    'guardian_assignment_request_sent',
+    'Demande envoyee',
+    'Ta demande de garant a ete envoyee.',
+    jsonb_build_object(
+      'owner_user_id', v_user_id,
+      'target_user_id', p_target_user_id
+    )
+  );
+
+  return jsonb_build_object('sent', true, 'status', 'sent');
+end;
+$$;
+
+grant execute on function public.request_guardian_assignment(uuid) to authenticated;
+
+insert into storage.buckets (id, name, public)
+values ('voice-notes', 'voice-notes', true)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists voice_notes_insert on storage.objects;
+create policy voice_notes_insert
+on storage.objects
+for insert
+to authenticated
+with check (bucket_id = 'voice-notes' and owner = auth.uid());
+
+drop policy if exists voice_notes_update on storage.objects;
+create policy voice_notes_update
+on storage.objects
+for update
+to authenticated
+using (bucket_id = 'voice-notes' and owner = auth.uid())
+with check (bucket_id = 'voice-notes' and owner = auth.uid());
+
+drop policy if exists voice_notes_delete on storage.objects;
+create policy voice_notes_delete
+on storage.objects
+for delete
+to authenticated
+using (bucket_id = 'voice-notes' and owner = auth.uid());
+
+commit;
+
 -- ============================================================================
 -- Migration 002: supabase/migrations/002_messaging_notifications.sql
 -- ============================================================================
@@ -1027,7 +1234,7 @@ begin
 
   if v_reverse_request.id is not null then
     update public.friend_requests fr
-    set status = 'accepted', updated_at = now()
+    set status = 'accepted'::public.friend_request_status, updated_at = now()
     where fr.id = v_reverse_request.id
     returning * into v_request;
 
@@ -1036,10 +1243,15 @@ begin
   end if;
 
   insert into public.friend_requests (requester_user_id, target_user_id, status, message)
-  values (v_user_id, p_target_user_id, 'pending', nullif(trim(p_message), ''))
+  values (
+    v_user_id,
+    p_target_user_id,
+    'pending'::public.friend_request_status,
+    nullif(trim(p_message), '')
+  )
   on conflict (requester_user_id, target_user_id)
   do update
-    set status = 'pending',
+    set status = 'pending'::public.friend_request_status,
         message = excluded.message,
         updated_at = now()
   returning * into v_request;
@@ -1088,7 +1300,11 @@ begin
 
   update public.friend_requests fr
   set
-    status = case when p_accept then 'accepted' else 'rejected' end,
+    status = case
+      when p_accept
+        then 'accepted'::public.friend_request_status
+      else 'rejected'::public.friend_request_status
+    end,
     updated_at = now()
   where fr.id = v_request.id
   returning * into v_request;

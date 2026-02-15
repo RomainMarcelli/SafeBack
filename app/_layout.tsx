@@ -1,14 +1,16 @@
 import "../global.css";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Stack } from "expo-router";
 import Constants from "expo-constants";
 import * as QuickActions from "expo-quick-actions";
 import { type RouterAction } from "expo-quick-actions/router";
+import { ActivityIndicator, Modal, Text, TouchableOpacity, View } from "react-native";
 import { enableFreeze, enableScreens } from "react-native-screens";
 import { startForgottenTripDetector } from "../src/services/forgottenTripDetector";
 import { startAutoCheckinDetector } from "../src/services/autoCheckinDetector";
 import { startFriendPresenceHeartbeat } from "../src/services/friendPresenceHeartbeat";
 import { syncPendingTripLaunches } from "../src/lib/trips/offlineTripQueue";
+import { markNotificationRead, respondFriendWellbeingPing } from "../src/lib/social/messagingDb";
 import { supabase } from "../src/lib/core/supabase";
 
 if (Constants.appOwnership === "expo") {
@@ -17,6 +19,21 @@ if (Constants.appOwnership === "expo") {
 }
 
 export default function RootLayout() {
+  const [pingPromptQueue, setPingPromptQueue] = useState<
+    Array<{
+      notificationId: string;
+      pingId: string;
+      title: string;
+      body: string;
+    }>
+  >([]);
+  const [pingPromptBusy, setPingPromptBusy] = useState(false);
+  const [pingPromptError, setPingPromptError] = useState("");
+  const activePingPrompt = useMemo(
+    () => (pingPromptQueue.length > 0 ? pingPromptQueue[0] : null),
+    [pingPromptQueue]
+  );
+
   useEffect(() => {
     let stopDetectors: Array<() => void> = [];
     let cancelled = false;
@@ -99,7 +116,7 @@ export default function RootLayout() {
         await QuickActions.setItems<RouterAction>([
           {
             id: "quick-trip",
-            title: "Demarrer un trajet",
+            title: "Démarrer un trajet",
             icon: "location",
             params: { href: "/setup" }
           },
@@ -111,7 +128,7 @@ export default function RootLayout() {
           },
           {
             id: "quick-arrival",
-            title: "Je suis bien rentre",
+            title: "Je suis bien rentré",
             icon: "confirmation",
             params: { href: "/quick-arrival" }
           },
@@ -126,6 +143,90 @@ export default function RootLayout() {
         // no-op : les actions rapides sont optionnelles et ne doivent pas bloquer le démarrage.
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let channel: any = null;
+
+    const resetChannel = () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+        channel = null;
+      }
+    };
+
+    const enqueuePromptFromPayload = (row: any) => {
+      if (!row || row.notification_type !== "friend_wellbeing_ping") return;
+      const notificationId = String(row.id ?? "").trim();
+      const pingId = String(row.data?.ping_id ?? "").trim();
+      if (!notificationId || !pingId) return;
+      const title = String(row.title ?? "Vérification d'arrivée");
+      const body = String(
+        row.body ?? "Un proche veut savoir si tu es bien arrivé. Réponds en un clic."
+      );
+      setPingPromptQueue((prev) => {
+        if (prev.some((item) => item.notificationId === notificationId)) return prev;
+        return [...prev, { notificationId, pingId, title, body }];
+      });
+    };
+
+    const attachChannel = async (forcedUserId?: string | null) => {
+      resetChannel();
+      const resolvedUserId =
+        forcedUserId ??
+        (await supabase.auth.getSession()).data.session?.user.id ??
+        null;
+      if (!resolvedUserId || cancelled) return;
+
+      // Au démarrage, remonte aussi les demandes non lues déjà présentes pour afficher la popup immédiatement.
+      const { data: existingRows } = await supabase
+        .from("app_notifications")
+        .select("*")
+        .eq("user_id", resolvedUserId)
+        .eq("notification_type", "friend_wellbeing_ping")
+        .is("read_at", null)
+        .order("created_at", { ascending: true })
+        .limit(5);
+      for (const row of existingRows ?? []) {
+        enqueuePromptFromPayload(row);
+      }
+
+      channel = supabase
+        .channel(`friend-ping-prompts-${resolvedUserId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "app_notifications",
+            filter: `user_id=eq.${resolvedUserId}`
+          },
+          (payload: any) => {
+            if (cancelled) return;
+            enqueuePromptFromPayload(payload.new);
+          }
+        )
+        .subscribe();
+    };
+
+    attachChannel();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
+      if (!session?.user) {
+        resetChannel();
+        setPingPromptQueue([]);
+        return;
+      }
+      attachChannel(session.user.id);
+    });
+
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+      resetChannel();
+    };
   }, []);
 
   useEffect(() => {
@@ -162,6 +263,90 @@ export default function RootLayout() {
     };
   }, []);
 
+  const closeActivePingPrompt = () => {
+    setPingPromptError("");
+    setPingPromptQueue((prev) => prev.slice(1));
+  };
+
+  const respondToActivePingPrompt = async (arrived: boolean) => {
+    if (!activePingPrompt) return;
+    try {
+      setPingPromptBusy(true);
+      setPingPromptError("");
+      await respondFriendWellbeingPing({
+        pingId: activePingPrompt.pingId,
+        arrived
+      });
+      await markNotificationRead(activePingPrompt.notificationId);
+      closeActivePingPrompt();
+    } catch (error: any) {
+      setPingPromptError(error?.message ?? "Impossible d'envoyer ta réponse.");
+    } finally {
+      setPingPromptBusy(false);
+    }
+  };
+
   // Navigateur racine : garantit un contexte de navigation stable pour toutes les routes enfants.
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <View style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }} />
+      <Modal transparent visible={Boolean(activePingPrompt)} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/50 px-6">
+          <View className="w-full rounded-3xl border border-[#E7E0D7] bg-white p-5 shadow-lg">
+            <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
+              Demande instantanée
+            </Text>
+            <Text className="mt-2 text-xl font-extrabold text-[#0F172A]">
+              {activePingPrompt?.title ?? "Vérification d'arrivée"}
+            </Text>
+            <Text className="mt-2 text-sm text-slate-700">
+              {activePingPrompt?.body ??
+                "Un proche souhaite confirmer que tu es bien arrivé."}
+            </Text>
+
+            {pingPromptError ? (
+              <Text className="mt-3 text-sm text-rose-700">{pingPromptError}</Text>
+            ) : null}
+
+            <View className="mt-4 flex-row gap-2">
+              <TouchableOpacity
+                className={`flex-1 rounded-2xl px-4 py-3 ${
+                  pingPromptBusy ? "bg-slate-300" : "bg-emerald-600"
+                }`}
+                onPress={() => respondToActivePingPrompt(true)}
+                disabled={pingPromptBusy}
+              >
+                {pingPromptBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text className="text-center text-sm font-semibold text-white">
+                    Oui, bien arrivé
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`flex-1 rounded-2xl px-4 py-3 ${
+                  pingPromptBusy ? "bg-slate-300" : "bg-rose-600"
+                }`}
+                onPress={() => respondToActivePingPrompt(false)}
+                disabled={pingPromptBusy}
+              >
+                <Text className="text-center text-sm font-semibold text-white">
+                  Non, pas encore
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={closeActivePingPrompt}
+              disabled={pingPromptBusy}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">Plus tard</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
 }

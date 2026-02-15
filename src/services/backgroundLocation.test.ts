@@ -66,7 +66,7 @@ describe("backgroundLocation service", () => {
     mocks.constants.appOwnership = "expo";
     const mod = await import("./backgroundLocation");
     await expect(mod.startBackgroundTracking("session-1")).rejects.toThrow(
-      "Suivi en arriere-plan indisponible sur Expo Go."
+      "Suivi en'arriere-plan indisponible sur Expo Go."
     );
   });
 

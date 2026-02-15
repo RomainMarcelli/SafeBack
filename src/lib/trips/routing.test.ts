@@ -91,7 +91,7 @@ describe("routing", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("fetchRoute returns null when addresses are blank", async () => {
+  it("fetchRoute returns null when'addresses are blank", async () => {
     vi.stubGlobal("fetch", vi.fn() as unknown as typeof fetch);
     await expect(fetchRoute(" ", "B", "walking")).resolves.toBeNull();
     await expect(fetchRoute("A", "   ", "driving")).resolves.toBeNull();

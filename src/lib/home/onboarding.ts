@@ -1,23 +1,46 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const ONBOARDING_VERSION = 1;
+const ONBOARDING_VERSION = 2;
 const ASSISTANT_VERSION = 1;
 
-export type OnboardingStepId = "profile" | "favorites" | "contacts" | "safety_review" | "first_trip";
+export type OnboardingStepId =
+  | "profile"
+  | "favorites"
+  | "contacts"
+  | "safety_review"
+  | "friends_map"
+  | "auto_checkins"
+  | "guardian_dashboard"
+  | "first_trip";
 
 export const ONBOARDING_STEP_ORDER: OnboardingStepId[] = [
   "profile",
   "favorites",
   "contacts",
   "safety_review",
+  "friends_map",
+  "auto_checkins",
+  "guardian_dashboard",
   "first_trip"
 ];
 
-export function getOnboardingStepRoute(stepId: OnboardingStepId): "/account" | "/favorites" | "/safety-alerts" | "/setup" {
+export function getOnboardingStepRoute(
+  stepId: OnboardingStepId
+):
+  | "/account"
+  | "/favorites"
+  | "/safety-alerts"
+  | "/friends-map"
+  | "/auto-checkins"
+  | "/guardian-dashboard"
+  | "/setup" {
   if (stepId === "profile") return "/account";
   if (stepId === "favorites") return "/favorites";
   if (stepId === "contacts") return "/favorites";
   if (stepId === "safety_review") return "/safety-alerts";
+  if (stepId === "friends_map") return "/friends-map";
+  if (stepId === "auto_checkins") return "/auto-checkins";
+  if (stepId === "guardian_dashboard") return "/guardian-dashboard";
   return "/setup";
 }
 

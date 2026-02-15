@@ -159,7 +159,7 @@ describe("evaluateAutoCheckinRules", () => {
     expect(result.triggeredRules.map((item) => item.id)).toEqual([rule.id]);
   });
 
-  it("ne déclenche pas si une condition active manque", () => {
+  it("ne déclenche pas si une condition'active manque", () => {
     const rule = buildRule({
       trigger: {
         byPosition: false,

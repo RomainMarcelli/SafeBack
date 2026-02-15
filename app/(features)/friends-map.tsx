@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/social/friendMap";
 import { confirmAction } from "../../src/lib/privacy/confirmAction";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 const MARKER_OPTIONS = ["🧭", "🏠", "🚶", "🚗", "🚆", "🛡️", "🌟", "🫶", "📍", "🛰️"];
 
@@ -153,9 +154,7 @@ export default function FriendsMapScreen() {
     };
   }, [userId, shareEnabled, pushMyPosition]);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const friendPresenceMap = useMemo(() => {
     const map = new Map<string, FriendMapPresence>();
@@ -213,13 +212,17 @@ export default function FriendsMapScreen() {
         await pushMyPosition({ force: true });
       }
       await refresh();
-      setSuccessMessage(nextShare ? "Partage carte active." : "Partage carte desactive.");
+      setSuccessMessage(nextShare ? "Partage carte active." : "Partage carte désactive.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible de sauvegarder les preferences carte.");
+      setErrorMessage(error?.message ?? "Impossible de sauvegarder les préférences carte.");
     } finally {
       setSavingSettings(false);
     }
   };
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -421,22 +424,8 @@ export default function FriendsMapScreen() {
           )}
         </View>
 
-        {successMessage ? (
-          <View className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <View className="flex-row items-center">
-              <Ionicons name="checkmark-circle-outline" size={16} color="#047857" />
-              <Text className="ml-2 text-sm text-emerald-700">{successMessage}</Text>
-            </View>
-          </View>
-        ) : null}
-        {errorMessage ? (
-          <View className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-            <View className="flex-row items-center">
-              <Ionicons name="warning-outline" size={16} color="#BE123C" />
-              <Text className="ml-2 text-sm text-rose-700">{errorMessage}</Text>
-            </View>
-          </View>
-        ) : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

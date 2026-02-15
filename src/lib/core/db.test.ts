@@ -141,7 +141,7 @@ describe("db helpers", () => {
 
   it("upsertProfile throws when user is not authenticated", async () => {
     state.sessionUserId = null;
-    await expect(upsertProfile({ username: "rome" })).rejects.toThrow("Utilisateur non authentifie.");
+    await expect(upsertProfile({ username: "rome" })).rejects.toThrow("Utilisateur non'authentifie.");
   });
 
   it("upsertProfile uses provided user_id", async () => {
@@ -440,7 +440,7 @@ describe("db helpers", () => {
     ).toBe(true);
   });
 
-  it("getSessionById and deleteSession apply id filter", async () => {
+  it("getSessionById and deleteSession'apply id filter", async () => {
     setResult("sessions", "maybeSingle", {
       data: { id: "session-9", from_address: "A", to_address: "B" },
       error: null

@@ -2,14 +2,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { deleteAllSessions, deleteSession, listSessions } from "../../src/lib/core/db";
 import { listSecurityTimelineEvents, type SecurityTimelineEvent } from "../../src/lib/social/messagingDb";
-import { getReliabilityScore, type ReliabilityScore } from "../../src/lib/trips/reliabilityScore";
+import {
+  getPersonalSafetyScore,
+  type PersonalSafetyScore
+} from "../../src/lib/trips/reliabilityScore";
 import { filterTripSessionsByQuery, getTimelineBadge } from "../../src/lib/trips/tripsUi";
 import { supabase } from "../../src/lib/core/supabase";
+import { confirmAction, confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 type SessionItem = {
   id: string;
@@ -34,7 +39,7 @@ export default function TripsScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [timeline, setTimeline] = useState<SecurityTimelineEvent[]>([]);
-  const [reliability, setReliability] = useState<ReliabilityScore | null>(null);
+  const [reliability, setReliability] = useState<PersonalSafetyScore | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [query, setQuery] = useState("");
@@ -62,7 +67,7 @@ export default function TripsScreen() {
         const [data, timelineEvents, reliabilityScore] = await Promise.all([
           listSessions(),
           listSecurityTimelineEvents(120),
-          getReliabilityScore()
+          getPersonalSafetyScore()
         ]);
         setSessions(data as SessionItem[]);
         setTimeline(timelineEvents);
@@ -75,13 +80,15 @@ export default function TripsScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return null;
-  }
+  const shouldHideScreen = !checking && !userId;
 
   const filteredSessions = useMemo(() => {
     return filterTripSessionsByQuery(sessions, query);
   }, [sessions, query]);
+
+  if (shouldHideScreen) {
+    return null;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -158,13 +165,35 @@ export default function TripsScreen() {
                     : "Critique"}
             </Text>
             <Text className="mt-3 text-xs uppercase tracking-widest text-slate-400">
-              Recommandations
+              Recommandations hebdomadaires
             </Text>
             {reliability.recommendations.slice(0, 3).map((item, index) => (
               <Text key={`reco-${index}`} className="mt-2 text-sm text-slate-200">
                 - {item}
               </Text>
             ))}
+            <View className="mt-4 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3">
+              <Text className="text-[11px] uppercase tracking-widest text-slate-400">Tendance 7 jours</Text>
+              <View className="mt-2 flex-row items-end justify-between">
+                {reliability.weeklyTrend.map((point) => (
+                  <View key={`trend-${point.dayLabel}`} className="items-center">
+                    <View
+                      className="w-6 rounded-t-md bg-sky-500"
+                      style={{
+                        height: Math.max(8, Math.round((point.score / 100) * 56))
+                      }}
+                    />
+                    <Text className="mt-1 text-[10px] text-slate-400">{point.dayLabel}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text className="mt-3 text-xs text-slate-300">
+                Objectif: score ≥ {reliability.weeklyGoal.targetScore} pendant 5 jours.
+              </Text>
+              <Text className={`mt-1 text-xs font-semibold ${reliability.weeklyGoal.completed ? "text-emerald-400" : "text-amber-300"}`}>
+                {reliability.weeklyGoal.daysMeetingTarget}/7 jour(s) au niveau cible
+              </Text>
+            </View>
           </View>
         ) : null}
 
@@ -244,32 +273,26 @@ export default function TripsScreen() {
               className={`mb-4 rounded-2xl px-4 py-3 ${
                 deletingAll ? "bg-slate-200" : "bg-rose-600"
               }`}
-              onPress={() => {
+              onPress={async () => {
                 if (deletingAll) return;
-                Alert.alert(
-                  "Tout supprimer ?",
-                  "Cette action est definitive.",
-                  [
-                    { text: "Annuler", style: "cancel" },
-                    {
-                      text: "Supprimer",
-                      style: "destructive",
-                      onPress: async () => {
-                        try {
-                          setDeletingAll(true);
-                          await deleteAllSessions();
-                          setSessions([]);
-                          setQuery("");
-                        } catch (error: any) {
-                          setErrorMessage(error?.message ?? "Erreur suppression.");
-                        } finally {
-                          setDeletingAll(false);
-                        }
-                      }
-                    }
-                  ],
-                  { cancelable: true }
-                );
+                const confirmed = await confirmSensitiveAction({
+                  firstTitle: "Tout supprimer ?",
+                  firstMessage: "Tu vas supprimer l'historique complet des trajets.",
+                  secondTitle: "Confirmer la suppression totale",
+                  secondMessage: "Cette action est définitive.",
+                  secondConfirmLabel: "Supprimer tout"
+                });
+                if (!confirmed) return;
+                try {
+                  setDeletingAll(true);
+                  await deleteAllSessions();
+                  setSessions([]);
+                  setQuery("");
+                } catch (error: any) {
+                  setErrorMessage(error?.message ?? "Erreur suppression.");
+                } finally {
+                  setDeletingAll(false);
+                }
               }}
               disabled={deletingAll}
             >
@@ -332,6 +355,12 @@ export default function TripsScreen() {
                 <TouchableOpacity
                   className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                   onPress={async () => {
+                    const confirmed = await confirmAction({
+                      title: "Supprimer ce trajet ?",
+                      message: "Cette suppression est définitive.",
+                      confirmLabel: "Supprimer"
+                    });
+                    if (!confirmed) return;
                     try {
                       await deleteSession(session.id);
                       setSessions((prev) => prev.filter((item) => item.id !== session.id));
@@ -349,9 +378,7 @@ export default function TripsScreen() {
           </View>
         ) : null}
 
-        {errorMessage ? (
-          <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

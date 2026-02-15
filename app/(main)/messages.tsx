@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Audio } from "expo-av";
 import { StatusBar } from "expo-status-bar";
-import { Link, Redirect } from "expo-router";
-import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import {
+  ActivityIndicator,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
-  createGuardianAssignment,
   ensureDirectConversation,
-  listArrivalMessages,
   listConversationMessages,
   listConversationParticipants,
   listConversations,
@@ -16,7 +22,11 @@ import {
   type ConversationMessage,
   type ConversationParticipant
 } from "../../src/lib/social/messagingDb";
+import { getPublicProfilesByUserIds, type PublicProfile } from "../../src/lib/social/friendsDb";
+import { startVoiceRecording, stopVoiceRecording, uploadVoiceDraft, type VoiceDraft } from "../../src/lib/social/voiceNotes";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { getThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
 
 function formatTime(value?: string | null) {
   if (!value) return "--:--";
@@ -26,16 +36,115 @@ function formatTime(value?: string | null) {
   return `${hours}:${minutes}`;
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
+function formatDuration(ms?: number | null) {
+  const seconds = Math.max(0, Math.round((ms ?? 0) / 1000));
+  const min = Math.floor(seconds / 60);
+  const sec = String(seconds % 60).padStart(2, "0");
+  return `${min}:${sec}`;
+}
+
+function labelFromProfile(profile?: PublicProfile | null, fallbackId?: string | null) {
+  const username = String(profile?.username ?? "").trim();
+  if (username) return `@${username}`;
+  const fullName = `${String(profile?.first_name ?? "").trim()} ${String(profile?.last_name ?? "").trim()}`.trim();
+  if (fullName) return fullName;
+  if (profile?.public_id) return `ID ${profile.public_id}`;
+  if (!fallbackId) return "Conversation";
+  return `ID ${fallbackId.slice(0, 8)}`;
+}
+
+function VoiceMessagePlayer(props: {
+  uri: string;
+  durationMs?: number | null;
+  mine: boolean;
+  compact?: boolean;
+}) {
+  const { uri, durationMs, mine, compact = false } = props;
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [internalDurationMs, setInternalDurationMs] = useState(durationMs ?? 0);
+
+  useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync().catch(() => {
+          // no-op
+        });
+      }
+    };
+  }, [sound]);
+
+  const resolvedDuration = Math.max(internalDurationMs, durationMs ?? 0, 1);
+  const progress = Math.max(0, Math.min(1, positionMs / resolvedDuration));
+
+  const onPress = async () => {
+    try {
+      if (!sound) {
+        const { sound: createdSound } = await Audio.Sound.createAsync(
+          { uri },
+          { shouldPlay: true },
+          (status) => {
+            if (!status.isLoaded) return;
+            setPositionMs(status.positionMillis ?? 0);
+            setInternalDurationMs(status.durationMillis ?? resolvedDuration);
+            setPlaying(Boolean(status.isPlaying));
+            if (status.didJustFinish) {
+              setPlaying(false);
+              setPositionMs(0);
+            }
+          }
+        );
+        setSound(createdSound);
+        setPlaying(true);
+        return;
+      }
+
+      const status = await sound.getStatusAsync();
+      if (!status.isLoaded) return;
+      if (status.isPlaying) {
+        await sound.pauseAsync();
+        setPlaying(false);
+      } else {
+        await sound.playAsync();
+        setPlaying(true);
+      }
+    } catch {
+      setPlaying(false);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      className={`rounded-2xl border px-3 ${compact ? "py-2" : "py-3"} ${
+        mine ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"
+      }`}
+      onPress={onPress}
+    >
+      <View className="flex-row items-center gap-2">
+        <Ionicons name={playing ? "pause" : "play"} size={16} color={mine ? "#E2E8F0" : "#0F172A"} />
+        <View className={`h-1.5 flex-1 overflow-hidden rounded-full ${mine ? "bg-slate-600" : "bg-slate-200"}`}>
+          <View
+            className={`h-full rounded-full ${mine ? "bg-cyan-300" : "bg-cyan-600"}`}
+            style={{ width: `${progress * 100}%` }}
+          />
+        </View>
+        <Text className={`text-xs font-semibold ${mine ? "text-slate-200" : "text-slate-700"}`}>
+          {formatDuration(playing ? positionMs : resolvedDuration)}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
 }
 
 export default function MessagesScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ conversationId?: string }>();
+  const preferredConversationFromParams =
+    typeof params.conversationId === "string" && params.conversationId.trim().length > 0
+      ? params.conversationId
+      : null;
+
   const [checking, setChecking] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,17 +152,21 @@ export default function MessagesScreen() {
   const [participantsByConversation, setParticipantsByConversation] = useState<
     Record<string, ConversationParticipant[]>
   >({});
+  const [profilesByUserId, setProfilesByUserId] = useState<Record<string, PublicProfile>>({});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [arrivalHistory, setArrivalHistory] = useState<ConversationMessage[]>([]);
   const [textMessage, setTextMessage] = useState("");
-  const [voiceNote, setVoiceNote] = useState("");
-  const [voiceSeconds, setVoiceSeconds] = useState(15);
-  const [conversationTarget, setConversationTarget] = useState("");
-  const [guardianUserId, setGuardianUserId] = useState("");
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
+  const [voiceDraft, setVoiceDraft] = useState<VoiceDraft | null>(null);
+
+  const threadRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -68,6 +181,33 @@ export default function MessagesScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    getThemeMode()
+      .then(setThemeMode)
+      .catch(() => setThemeMode("light"));
+  }, []);
+
+  useEffect(() => {
+    if (!recordingStartedAt) {
+      setRecordingElapsedMs(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setRecordingElapsedMs(Date.now() - recordingStartedAt);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [recordingStartedAt]);
+
+  useEffect(() => {
+    return () => {
+      if (recording) {
+        recording.stopAndUnloadAsync().catch(() => {
+          // no-op
+        });
+      }
+    };
+  }, [recording]);
+
   const loadConversations = async (preferredConversationId?: string | null) => {
     const rows = await listConversations();
     const participantsPairs = await Promise.all(
@@ -80,10 +220,22 @@ export default function MessagesScreen() {
     setParticipantsByConversation(participantsMap);
     setConversations(rows);
 
+    const uniqueUserIds = [...new Set(participantsPairs.flatMap(([, participants]) => participants.map((p) => p.user_id)))];
+    if (uniqueUserIds.length > 0) {
+      const profiles = await getPublicProfilesByUserIds(uniqueUserIds);
+      setProfilesByUserId(Object.fromEntries(profiles.map((profile) => [profile.user_id, profile])));
+    } else {
+      setProfilesByUserId({});
+    }
+
     const targetConversationId =
-      preferredConversationId ??
-      selectedConversationId ??
-      (rows.length > 0 ? rows[0].id : null);
+      preferredConversationId ?? selectedConversationId ?? (rows.length > 0 ? rows[0].id : null);
+
+    if (targetConversationId && !rows.some((row) => row.id === targetConversationId)) {
+      setSelectedConversationId(rows.length > 0 ? rows[0].id : null);
+      return rows.length > 0 ? rows[0].id : null;
+    }
+
     setSelectedConversationId(targetConversationId);
     return targetConversationId;
   };
@@ -97,26 +249,30 @@ export default function MessagesScreen() {
     setMessages(rows);
   };
 
-  const loadArrivalHistory = async () => {
-    const rows = await listArrivalMessages(20);
-    setArrivalHistory(rows);
-  };
-
   useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
         setLoading(true);
         setErrorMessage("");
-        const conversationId = await loadConversations();
-        await Promise.all([loadMessages(conversationId), loadArrivalHistory()]);
+        const conversationId = await loadConversations(preferredConversationFromParams);
+        await loadMessages(conversationId);
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement de la messagerie.");
       } finally {
         setLoading(false);
       }
     })();
-  }, [userId]);
+  }, [userId, preferredConversationFromParams]);
+
+  useEffect(() => {
+    if (!preferredConversationFromParams) return;
+    if (!conversations.some((conversation) => conversation.id === preferredConversationFromParams)) return;
+    setSelectedConversationId(preferredConversationFromParams);
+    loadMessages(preferredConversationFromParams).catch(() => {
+      // no-op
+    });
+  }, [preferredConversationFromParams, conversations]);
 
   useEffect(() => {
     if (!selectedConversationId) return;
@@ -134,11 +290,10 @@ export default function MessagesScreen() {
           try {
             await Promise.all([
               loadMessages(selectedConversationId),
-              loadConversations(selectedConversationId),
-              loadArrivalHistory()
+              loadConversations(selectedConversationId)
             ]);
           } catch {
-            // Conserve l'état précédent.
+            // no-op
           }
         }
       )
@@ -149,24 +304,26 @@ export default function MessagesScreen() {
     };
   }, [selectedConversationId]);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
+  const darkMode = themeMode === "dark";
 
-  const selectedParticipants = selectedConversationId
-    ? participantsByConversation[selectedConversationId] ?? []
-    : [];
+  const conversationItems = useMemo(() => {
+    return conversations.map((conversation) => {
+      const participants = participantsByConversation[conversation.id] ?? [];
+      const peer = participants.find((participant) => participant.user_id !== userId);
+      const profile = peer ? profilesByUserId[peer.user_id] : undefined;
+      return {
+        id: conversation.id,
+        peerUserId: peer?.user_id ?? null,
+        label: labelFromProfile(profile, peer?.user_id),
+        lastMessageAt: conversation.last_message_at ?? conversation.updated_at
+      };
+    });
+  }, [conversations, participantsByConversation, profilesByUserId, userId]);
 
-  const selectedPeerId = useMemo(() => {
-    if (!selectedParticipants.length || !userId) return null;
-    return selectedParticipants.find((item) => item.user_id !== userId)?.user_id ?? null;
-  }, [selectedParticipants, userId]);
-
-  const selectedConversationLabel = selectedPeerId
-    ? `Chat ${selectedPeerId.slice(0, 8)}`
-    : selectedConversationId
-    ? `Conversation ${selectedConversationId.slice(0, 6)}`
-    : "Aucune conversation";
+  const selectedConversationMeta = conversationItems.find(
+    (conversation) => conversation.id === selectedConversationId
+  );
 
   const sendText = async () => {
     if (!selectedConversationId || !textMessage.trim()) return;
@@ -182,206 +339,169 @@ export default function MessagesScreen() {
       setTextMessage("");
       await Promise.all([loadMessages(selectedConversationId), loadConversations(selectedConversationId)]);
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d envoyer le message.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyer le message.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const startRecordingVoice = async () => {
+    if (!selectedConversationId) {
+      setErrorMessage("Choisis d'abord une conversation pour envoyer un vocal.");
+      return;
+    }
+    try {
+      setErrorMessage("");
+      setSuccessMessage("");
+      const nextRecording = await startVoiceRecording();
+      setRecording(nextRecording);
+      setRecordingStartedAt(Date.now());
+      setVoiceDraft(null);
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de démarrer l'enregistrement.");
+    }
+  };
+
+  const stopRecordingVoice = async () => {
+    if (!recording) return;
+    try {
+      setBusy(true);
+      const draft = await stopVoiceRecording(recording);
+      setRecording(null);
+      setRecordingStartedAt(null);
+      if (draft.durationMs < 500) {
+        setErrorMessage("Vocal trop court. Maintiens un peu plus longtemps.");
+        return;
+      }
+      setVoiceDraft(draft);
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de finaliser l'enregistrement.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelRecording = async () => {
+    if (!recording) return;
+    try {
+      await recording.stopAndUnloadAsync();
+    } catch {
+      // no-op
+    }
+    setRecording(null);
+    setRecordingStartedAt(null);
+    setRecordingElapsedMs(0);
   };
 
   const sendVoice = async () => {
-    if (!selectedConversationId) return;
+    if (!selectedConversationId || !voiceDraft) return;
     try {
       setBusy(true);
       setErrorMessage("");
       setSuccessMessage("");
+      const uploaded = await uploadVoiceDraft({
+        uri: voiceDraft.uri,
+        conversationId: selectedConversationId,
+        durationMs: voiceDraft.durationMs
+      });
       await sendConversationMessage({
         conversationId: selectedConversationId,
         messageType: "voice",
-        body: voiceNote.trim() || "Message vocal",
-        durationMs: voiceSeconds * 1000,
+        body: null,
+        voiceUrl: uploaded.voiceUrl,
+        durationMs: uploaded.durationMs,
         metadata: {
-          recording: "beta-placeholder"
+          provider: "expo-av",
+          format: "m4a"
         }
       });
-      setVoiceNote("");
-      await Promise.all([
-        loadMessages(selectedConversationId),
-        loadConversations(selectedConversationId)
-      ]);
+      setVoiceDraft(null);
+      await Promise.all([loadMessages(selectedConversationId), loadConversations(selectedConversationId)]);
+      setSuccessMessage("Vocal envoyé.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d envoyer le vocal.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyer le vocal.");
     } finally {
       setBusy(false);
     }
   };
 
-  const openDirectConversation = async () => {
-    const target = conversationTarget.trim();
-    if (!target) return;
-    try {
-      setBusy(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-      const conversationId = await ensureDirectConversation(target);
-      setConversationTarget("");
-      await loadConversations(conversationId);
-      await loadMessages(conversationId);
-      setSuccessMessage("Conversation prete.");
-    } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d ouvrir la conversation.");
-    } finally {
-      setBusy(false);
-    }
+  const openConversationFromFriendScreen = async () => {
+    router.push("/friends");
   };
 
-  const assignGuardian = async () => {
-    const target = guardianUserId.trim();
-    if (!target) return;
-    try {
-      setBusy(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-      await createGuardianAssignment(target);
-      setGuardianUserId("");
-      setSuccessMessage("Garant assigne. Une notification lui sera envoyee.");
-    } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d assigner ce garant.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
-    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
-      <StatusBar style="dark" />
-      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
-      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
-      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
-
-      <ScrollView className="flex-1 px-6" contentContainerStyle={{ paddingBottom: 48 }}>
-        <View className="mt-6 flex-row items-center justify-between">
-          <View className="rounded-full bg-[#111827] px-3 py-1">
-            <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
-              Messagerie
-            </Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: darkMode ? "#0B1220" : "#F7F2EA" }}>
+      <StatusBar style={darkMode ? "light" : "dark"} />
+      <View className="flex-1 px-4 pb-4">
+        <View className="mt-4 flex-row items-center justify-between">
+          <View>
+            <Text className={`text-[11px] font-semibold uppercase tracking-[2px] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Messagerie</Text>
+            <Text className={`mt-1 text-2xl font-extrabold ${darkMode ? "text-slate-100" : "text-[#0F172A]"}`}>Conversations</Text>
           </View>
-          <TouchableOpacity
-            className="rounded-full border border-[#E7E0D7] bg-white/90 px-3 py-2"
-            onPress={async () => {
-              try {
-                setLoading(true);
-                const conversationId = await loadConversations(selectedConversationId);
-                await Promise.all([loadMessages(conversationId), loadArrivalHistory()]);
-              } finally {
-                setLoading(false);
-              }
-            }}
-            disabled={busy || loading}
-          >
-            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">
-              Actualiser
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Discussions proches</Text>
-        <Text className="mt-2 text-base text-[#475569]">
-          Echange par message, envoie un vocal beta, et garde l historique des confirmations.
-        </Text>
-
-        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Reseau social</Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            Ajoute des amis, gere les demandes et choisis tes garants depuis un ecran dedie.
-          </Text>
-          <Link href="/friends" asChild>
-            <TouchableOpacity className="mt-3 rounded-2xl bg-[#111827] px-4 py-3">
-              <Text className="text-center text-sm font-semibold text-white">Ouvrir la page Amis</Text>
+          <View className="flex-row items-center gap-2">
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white px-4 py-2"
+              onPress={openConversationFromFriendScreen}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-widest text-slate-700">Amis</Text>
             </TouchableOpacity>
-          </Link>
+            <TouchableOpacity
+              className="rounded-full border border-[#E7E0D7] bg-white p-2"
+              onPress={async () => {
+                try {
+                  setLoading(true);
+                  const conversationId = await loadConversations(selectedConversationId);
+                  await loadMessages(conversationId);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || busy}
+            >
+              <Ionicons name="refresh" size={16} color="#334155" />
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">
-            Ouvrir une conversation directe
-          </Text>
-          <TextInput
-            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
-            placeholder="ID utilisateur du proche"
-            placeholderTextColor="#94a3b8"
-            value={conversationTarget}
-            onChangeText={setConversationTarget}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            className={`mt-3 rounded-2xl px-4 py-3 ${
-              conversationTarget.trim() && !busy ? "bg-[#111827]" : "bg-slate-300"
-            }`}
-            onPress={openDirectConversation}
-            disabled={!conversationTarget.trim() || busy}
-          >
-            <Text className="text-center text-sm font-semibold text-white">
-              Ouvrir le chat
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">
-            Assigner un garant
-          </Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            La personne sera notifiee en cas de "bien rentre" ou nouveaux messages.
-          </Text>
-          <TextInput
-            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
-            placeholder="ID utilisateur du garant"
-            placeholderTextColor="#94a3b8"
-            value={guardianUserId}
-            onChangeText={setGuardianUserId}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            className={`mt-3 rounded-2xl px-4 py-3 ${
-              guardianUserId.trim() && !busy ? "bg-[#0F766E]" : "bg-slate-300"
-            }`}
-            onPress={assignGuardian}
-            disabled={!guardianUserId.trim() || busy}
-          >
-            <Text className="text-center text-sm font-semibold text-white">Assigner garant</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Conversations</Text>
+        <View className="mt-3 rounded-2xl border border-[#E7E0D7] bg-white/90 px-3 py-3">
           {loading ? (
-            <View className="mt-3 flex-row items-center">
+            <View className="flex-row items-center py-1">
               <ActivityIndicator size="small" color="#334155" />
-              <Text className="ml-2 text-sm text-slate-600">Chargement...</Text>
+              <Text className="ml-2 text-sm text-slate-600">Chargement des conversations...</Text>
             </View>
-          ) : conversations.length === 0 ? (
-            <Text className="mt-3 text-sm text-slate-500">Aucune conversation pour le moment.</Text>
+          ) : conversationItems.length === 0 ? (
+            <View className="py-1">
+              <Text className="text-sm text-slate-600">Aucune conversation. Commence depuis la page Amis.</Text>
+              <TouchableOpacity
+                className="mt-2 self-start rounded-full bg-[#111827] px-4 py-2"
+                onPress={openConversationFromFriendScreen}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-widest text-white">Ouvrir mes amis</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View className="flex-row gap-2">
-                {conversations.map((conversation) => {
-                  const active = selectedConversationId === conversation.id;
-                  const participants = participantsByConversation[conversation.id] ?? [];
-                  const peer = participants.find((item) => item.user_id !== userId);
+                {conversationItems.map((item) => {
+                  const active = item.id === selectedConversationId;
                   return (
                     <TouchableOpacity
-                      key={conversation.id}
-                      className={`rounded-2xl px-4 py-3 ${active ? "bg-[#111827]" : "bg-slate-100"}`}
-                      onPress={async () => {
-                        setSelectedConversationId(conversation.id);
-                        await loadMessages(conversation.id);
+                      key={item.id}
+                      className={`rounded-2xl px-4 py-3 ${active ? "bg-[#0F172A]" : "border border-slate-200 bg-slate-50"}`}
+                      onPress={() => {
+                        setSelectedConversationId(item.id);
+                        loadMessages(item.id).catch(() => {
+                          // no-op
+                        });
                       }}
                     >
-                      <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-800"}`}>
-                        {peer ? `Chat ${peer.user_id.slice(0, 8)}` : `Conv ${conversation.id.slice(0, 6)}`}
-                      </Text>
-                      <Text className={`text-xs ${active ? "text-slate-300" : "text-slate-500"}`}>
-                        {formatTime(conversation.last_message_at ?? conversation.updated_at)}
+                      <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-800"}`}>{item.label}</Text>
+                      <Text className={`mt-1 text-xs ${active ? "text-slate-300" : "text-slate-500"}`}>
+                        {formatTime(item.lastMessageAt)}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -391,177 +511,165 @@ export default function MessagesScreen() {
           )}
         </View>
 
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Fil de discussion</Text>
-          <Text className="mt-2 text-sm font-semibold text-slate-800">{selectedConversationLabel}</Text>
+        <View className="mt-3 flex-1 overflow-hidden rounded-3xl border border-[#D9D3CA] bg-white shadow-sm">
+          <View className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Fil de discussion</Text>
+            <Text className="mt-1 text-sm font-semibold text-slate-900">
+              {selectedConversationMeta?.label ?? "Sélectionne une conversation"}
+            </Text>
+          </View>
 
-          {selectedConversationId ? (
-            <View className="mt-3">
-              {messages.length === 0 ? (
-                <Text className="text-sm text-slate-500">Aucun message dans cette conversation.</Text>
-              ) : (
-                messages.map((message) => {
-                  const mine = message.sender_user_id === userId;
-                  const isArrival = message.message_type === "arrival";
-                  const isVoice = message.message_type === "voice";
-                  return (
-                    <View
-                      key={message.id}
-                      className={`mb-2 rounded-2xl px-4 py-3 ${
-                        isArrival
-                          ? "bg-emerald-100"
-                          : mine
-                          ? "bg-[#111827]"
-                          : "border border-slate-200 bg-white"
+          <ScrollView
+            ref={threadRef}
+            className="flex-1 bg-[#F8FAFC] px-3 py-3"
+            contentContainerStyle={{ paddingBottom: 12 }}
+            onContentSizeChange={() => threadRef.current?.scrollToEnd({ animated: true })}
+          >
+            {!selectedConversationId ? (
+              <View className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <Text className="text-sm text-slate-600">Choisis une conversation pour commencer.</Text>
+              </View>
+            ) : messages.length === 0 ? (
+              <View className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                <Text className="text-sm text-slate-600">Aucun message pour le moment.</Text>
+              </View>
+            ) : (
+              messages.map((message) => {
+                const mine = message.sender_user_id === userId;
+                const isVoice = message.message_type === "voice";
+                const isArrival = message.message_type === "arrival";
+
+                return (
+                  <View
+                    key={message.id}
+                    className={`mb-2 max-w-[88%] rounded-2xl px-3 py-2 ${
+                      isArrival
+                        ? "self-center border border-emerald-200 bg-emerald-50"
+                        : mine
+                          ? "self-end bg-[#111827]"
+                          : "self-start border border-slate-200 bg-white"
+                    }`}
+                  >
+                    <Text
+                      className={`text-[10px] font-semibold uppercase tracking-[1.5px] ${
+                        isArrival ? "text-emerald-700" : mine ? "text-slate-400" : "text-slate-500"
                       }`}
                     >
-                      <Text
-                        className={`text-xs uppercase tracking-widest ${
-                          isArrival ? "text-emerald-700" : mine ? "text-slate-300" : "text-slate-500"
-                        }`}
-                      >
-                        {isArrival
-                          ? "Bien rentre"
-                          : isVoice
-                          ? "Vocal"
-                          : message.message_type === "system"
-                          ? "Systeme"
-                          : mine
-                          ? "Moi"
-                          : "Proche"}
+                      {isArrival ? "Arrivée" : isVoice ? "Vocal" : mine ? "Moi" : selectedConversationMeta?.label ?? "Proche"}
+                    </Text>
+
+                    {isVoice && message.voice_url ? (
+                      <View className="mt-2">
+                        <VoiceMessagePlayer
+                          uri={message.voice_url}
+                          durationMs={message.duration_ms}
+                          mine={mine}
+                          compact
+                        />
+                      </View>
+                    ) : null}
+
+                    {message.body ? (
+                      <Text className={`mt-2 text-sm ${mine ? "text-white" : isArrival ? "text-emerald-900" : "text-slate-700"}`}>
+                        {message.body}
                       </Text>
-                      {isVoice ? (
-                        <View className="mt-2 flex-row items-center">
-                          <Ionicons
-                            name="mic-outline"
-                            size={16}
-                            color={mine ? "#E2E8F0" : "#334155"}
-                          />
-                          <Text
-                            className={`ml-2 text-sm font-semibold ${
-                              mine ? "text-slate-100" : "text-slate-800"
-                            }`}
-                          >
-                            Vocal {Math.max(1, Math.round((message.duration_ms ?? 0) / 1000))} sec
-                          </Text>
-                        </View>
-                      ) : null}
-                      {message.body ? (
-                        <Text
-                          className={`mt-2 text-sm ${
-                            isArrival
-                              ? "text-emerald-900"
-                              : mine
-                              ? "text-white"
-                              : "text-slate-700"
-                          }`}
-                        >
-                          {message.body}
-                        </Text>
-                      ) : null}
-                      <Text
-                        className={`mt-2 text-xs ${
-                          isArrival ? "text-emerald-700" : mine ? "text-slate-300" : "text-slate-500"
-                        }`}
-                      >
-                        {formatDate(message.created_at)} {formatTime(message.created_at)}
-                      </Text>
-                    </View>
-                  );
-                })
-              )}
-            </View>
-          ) : (
-            <Text className="mt-3 text-sm text-slate-500">
-              Ouvre une conversation pour commencer a discuter.
-            </Text>
-          )}
-        </View>
+                    ) : null}
 
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Ecrire un message</Text>
-          <TextInput
-            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
-            placeholder="Ton message"
-            placeholderTextColor="#94a3b8"
-            value={textMessage}
-            onChangeText={setTextMessage}
-          />
-          <TouchableOpacity
-            className={`mt-3 rounded-2xl px-4 py-3 ${
-              textMessage.trim() && selectedConversationId && !busy ? "bg-[#111827]" : "bg-slate-300"
-            }`}
-            onPress={sendText}
-            disabled={!textMessage.trim() || !selectedConversationId || busy}
-          >
-            <Text className="text-center text-sm font-semibold text-white">Envoyer le message</Text>
-          </TouchableOpacity>
-        </View>
+                    <Text className={`mt-2 text-[11px] ${mine ? "text-slate-400" : "text-slate-500"}`}>
+                      {formatTime(message.created_at)}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
 
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Vocal (beta)</Text>
-          <Text className="mt-2 text-sm text-slate-600">
-            Enregistrement reel a brancher ensuite. Pour l instant, un vocal beta est journalise.
-          </Text>
-          <View className="mt-3 flex-row gap-2">
-            {[10, 15, 30, 45].map((seconds) => {
-              const active = voiceSeconds === seconds;
-              return (
-                <TouchableOpacity
-                  key={`voice-${seconds}`}
-                  className={`rounded-full px-3 py-2 ${
-                    active ? "bg-[#0EA5E9]" : "border border-slate-200 bg-white"
-                  }`}
-                  onPress={() => setVoiceSeconds(seconds)}
-                >
-                  <Text className={`text-sm font-semibold ${active ? "text-white" : "text-slate-700"}`}>
-                    {seconds}s
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <TextInput
-            className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
-            placeholder="Note optionnelle du vocal"
-            placeholderTextColor="#94a3b8"
-            value={voiceNote}
-            onChangeText={setVoiceNote}
-          />
-          <TouchableOpacity
-            className={`mt-3 rounded-2xl px-4 py-3 ${
-              selectedConversationId && !busy ? "bg-[#0F766E]" : "bg-slate-300"
-            }`}
-            onPress={sendVoice}
-            disabled={!selectedConversationId || busy}
-          >
-            <Text className="text-center text-sm font-semibold text-white">Envoyer le vocal</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">
-            Historique "bien rentre"
-          </Text>
-          {arrivalHistory.length === 0 ? (
-            <Text className="mt-3 text-sm text-slate-500">Aucune confirmation d arrivee.</Text>
-          ) : (
-            arrivalHistory.slice(0, 8).map((item) => (
-              <View key={`arrival-${item.id}`} className="mt-2 rounded-xl bg-emerald-50 px-3 py-3">
-                <Text className="text-xs uppercase tracking-widest text-emerald-700">
-                  {formatDate(item.created_at)} {formatTime(item.created_at)}
-                </Text>
-                <Text className="mt-1 text-sm font-semibold text-emerald-900">
-                  {item.body || "Je suis bien rentre."}
-                </Text>
+          {recording ? (
+            <View className="border-t border-rose-100 bg-rose-50 px-3 py-3">
+              <View className="flex-row items-center justify-between">
+                <Text className="text-sm font-semibold text-rose-800">Enregistrement... {formatDuration(recordingElapsedMs)}</Text>
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    className="rounded-full border border-rose-200 bg-white px-3 py-2"
+                    onPress={cancelRecording}
+                  >
+                    <Text className="text-xs font-semibold uppercase tracking-widest text-rose-700">Annuler</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="rounded-full bg-rose-600 px-3 py-2"
+                    onPress={stopRecordingVoice}
+                    disabled={busy}
+                  >
+                    <Text className="text-xs font-semibold uppercase tracking-widest text-white">Stop</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            ))
-          )}
+            </View>
+          ) : null}
+
+          {voiceDraft ? (
+            <View className="border-t border-cyan-100 bg-cyan-50 px-3 py-3">
+              <Text className="text-xs font-semibold uppercase tracking-widest text-cyan-700">Aperçu vocal</Text>
+              <View className="mt-2">
+                <VoiceMessagePlayer uri={voiceDraft.uri} durationMs={voiceDraft.durationMs} mine={false} />
+              </View>
+              <View className="mt-2 flex-row gap-2">
+                <TouchableOpacity
+                  className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                  onPress={() => setVoiceDraft(null)}
+                  disabled={busy}
+                >
+                  <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">Supprimer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className={`flex-1 rounded-2xl px-3 py-2 ${busy ? "bg-slate-300" : "bg-cyan-700"}`}
+                  onPress={sendVoice}
+                  disabled={busy}
+                >
+                  <Text className="text-center text-xs font-semibold uppercase tracking-widest text-white">Envoyer le vocal</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          <View className="border-t border-slate-100 bg-white px-3 py-3">
+            <View className="flex-row items-end gap-2">
+              <TextInput
+                className="flex-1 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
+                placeholder="Écrire un message"
+                placeholderTextColor="#94a3b8"
+                value={textMessage}
+                onChangeText={setTextMessage}
+                multiline
+              />
+              <TouchableOpacity
+                className={`h-11 w-11 items-center justify-center rounded-full ${
+                  textMessage.trim() && selectedConversationId && !busy ? "bg-[#111827]" : "bg-slate-300"
+                }`}
+                onPress={sendText}
+                disabled={!textMessage.trim() || !selectedConversationId || busy}
+              >
+                <Ionicons name="send" size={16} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`h-11 w-11 items-center justify-center rounded-full ${
+                  !selectedConversationId || busy ? "bg-slate-300" : "bg-cyan-700"
+                }`}
+                onPress={startRecordingVoice}
+                disabled={!selectedConversationId || busy || Boolean(recording)}
+              >
+                <Ionicons name="mic" size={16} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <Text className="mt-2 text-xs text-slate-500">
+              Texte ou vocal. Les vocaux sont envoyés comme des notes audio réécoutables.
+            </Text>
+          </View>
         </View>
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
-      </ScrollView>
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} compact /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} compact /> : null}
+      </View>
     </SafeAreaView>
   );
 }

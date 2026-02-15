@@ -72,7 +72,7 @@ export async function resetHomeWidgetState(): Promise<void> {
 
 export function formatWidgetStatusLabel(status: HomeWidgetStatus): string {
   if (status === "trip_active") return "Trajet actif";
-  if (status === "arrived") return "Bien rentre";
+  if (status === "arrived") return "Bien rentré";
   return "Pret";
 }
 

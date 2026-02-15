@@ -4,10 +4,13 @@ import { Animated, Easing, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import * as Network from "expo-network";
+import * as QuickActions from "expo-quick-actions";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useQuickActionRouting } from "expo-quick-actions/router";
+import { isRouterAction } from "expo-quick-actions/router";
 import { supabase } from "../../src/lib/core/supabase";
 import { confirmAction } from "../../src/lib/privacy/confirmAction";
+import { PUSH_CONSENT_KEY } from "../../src/lib/privacy/privacyKeys";
 import { getUnreadNotificationsCount } from "../../src/lib/social/messagingDb";
 
 type TabItem = {
@@ -50,8 +53,6 @@ const TABS: TabItem[] = [
     iconActive: "person"
   }
 ];
-
-const PUSH_CONSENT_KEY = "safeback:push-consent-v1";
 
 function TabButton(props: { item: TabItem; active: boolean; onPress: () => void }) {
   const { item, active, onPress } = props;
@@ -127,18 +128,62 @@ function TabButton(props: { item: TabItem; active: boolean; onPress: () => void 
 }
 
 export default function MainLayout() {
-  // Le hook doit vivre dans un sous-layout (pas dans app/_layout.tsx) pour avoir un contexte nav valide.
-  useQuickActionRouting((action) => {
-    console.log("[quick-actions] received", {
-      id: action?.id ?? null,
-      href: (action as any)?.params?.href ?? null
-    });
-    return false;
-  });
-
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [online, setOnline] = useState<boolean>(true);
+  const [pendingQuickHref, setPendingQuickHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Les quick actions peuvent arriver avant que le navigateur soit prêt: on met en file d'attente.
+    const queueIfRouterAction = (action: QuickActions.Action | undefined) => {
+      if (!action || !isRouterAction(action)) return;
+      const href = action.params?.href;
+      if (typeof href !== "string" || href.length === 0) return;
+      setPendingQuickHref(href);
+    };
+
+    queueIfRouterAction(QuickActions.initial);
+    const sub = QuickActions.addListener((action) => {
+      queueIfRouterAction(action);
+    });
+
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingQuickHref) return;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryNavigate = (attempt: number) => {
+      if (cancelled) return;
+      try {
+        router.push(pendingQuickHref as any);
+        setPendingQuickHref(null);
+      } catch (error) {
+        const message = String((error as { message?: string })?.message ?? "");
+        const isNavigationContextError = message.toLowerCase().includes("navigation context");
+        // Certains appareils déclenchent l'action rapide avant l'initialisation du container.
+        // On retente quelques fois sans casser le rendu global.
+        if (isNavigationContextError && attempt < 8) {
+          retryTimer = setTimeout(() => tryNavigate(attempt + 1), 120);
+          return;
+        }
+        console.log("[quick-actions] navigation delayed/failed", {
+          attempt: attempt + 1,
+          message
+        });
+        setPendingQuickHref(null);
+      }
+    };
+
+    retryTimer = setTimeout(() => tryNavigate(0), 0);
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [pendingQuickHref]);
 
   const ensurePushNotificationsConsent = async (): Promise<any> => {
     if (Constants.appOwnership === "expo") return null;
@@ -158,7 +203,7 @@ export default function MainLayout() {
     const approved = await confirmAction({
       title: "Activer les notifications ?",
       message:
-        "SafeBack peut t'alerter en direct (messages, demandes de verification, confirmations d'arrivee).",
+        "SafeBack peut t'alerter en direct (messages, demandes de vérification, confirmations d'arrivée).",
       confirmLabel: "Autoriser"
     });
 
@@ -175,6 +220,26 @@ export default function MainLayout() {
     await AsyncStorage.setItem(PUSH_CONSENT_KEY, "denied");
     return null;
   };
+
+  useEffect(() => {
+    let mounted = true;
+    Network.getNetworkStateAsync()
+      .then((state) => {
+        if (!mounted) return;
+        setOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setOnline(false);
+      });
+    const sub = Network.addNetworkStateListener((state) => {
+      setOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
+    });
+    return () => {
+      mounted = false;
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -401,6 +466,34 @@ export default function MainLayout() {
             </TouchableOpacity>
           </View>
         ) : null}
+        <View
+          style={{
+            position: "absolute",
+            left: 14,
+            top: -34,
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: 10,
+            paddingVertical: 5,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: online ? "#86EFAC" : "#FCA5A5",
+            backgroundColor: "#FFFFFF"
+          }}
+        >
+          <View
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              backgroundColor: online ? "#16A34A" : "#DC2626",
+              marginRight: 6
+            }}
+          />
+          <Text style={{ fontSize: 10, fontWeight: "700", color: online ? "#166534" : "#991B1B" }}>
+            {online ? "En ligne" : "Hors ligne"}
+          </Text>
+        </View>
       </View>
     </View>
   );

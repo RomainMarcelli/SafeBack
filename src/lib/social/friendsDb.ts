@@ -38,6 +38,19 @@ export type FriendWithProfile = FriendRow & {
   profile?: PublicProfile;
 };
 
+function mapFriendRequestError(error: unknown): Error {
+  const code = String((error as { code?: string })?.code ?? "");
+  const message = String((error as { message?: string })?.message ?? "");
+  // Garde-fou UX: si la fonction SQL n'est pas encore patchée, on renvoie un message FR clair.
+  if (code === "42804" && message.includes("friend_request_status")) {
+    return new Error(
+      "La base n'est pas encore synchronisee pour les demandes d'ami. Applique le correctif SQL puis reessaie."
+    );
+  }
+  if (error instanceof Error) return error;
+  return new Error(message || "Erreur inconnue.");
+}
+
 async function requireUserId(): Promise<string> {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
@@ -100,7 +113,7 @@ export async function sendFriendRequest(targetUserId: string, message?: string):
     p_target_user_id: targetUserId,
     p_message: message?.trim() || null
   });
-  if (error) throw error;
+  if (error) throw mapFriendRequestError(error);
   return data as FriendRequest;
 }
 
@@ -113,7 +126,7 @@ export async function respondToFriendRequest(params: {
     p_request_id: params.requestId,
     p_accept: params.accept
   });
-  if (error) throw error;
+  if (error) throw mapFriendRequestError(error);
   const request = data as FriendRequest;
   if (params.accept && params.autoOpenConversation !== false) {
     const me = await requireUserId();

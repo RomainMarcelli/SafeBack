@@ -39,6 +39,7 @@ import {
 import { buildFriendInviteMessage } from "../../src/lib/social/friendInvite";
 import { confirmAction } from "../../src/lib/privacy/confirmAction";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 function profileLabel(profile?: PublicProfile) {
   if (!profile) return "Profil";
@@ -138,9 +139,7 @@ export default function FriendsScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const incomingRequests = useMemo(
     () => requests.filter((request) => request.direction === "incoming"),
@@ -194,9 +193,9 @@ export default function FriendsScreen() {
       const normalizedMessage = requestMessage.trim();
       await sendFriendRequest(targetUserId, normalizedMessage ? normalizedMessage : undefined);
       await refresh();
-      setSuccessMessage("Demande d'ami envoyee.");
+      setSuccessMessage("Demande d'ami envoyée.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d'envoyer la demande.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyér la demande.");
     } finally {
       setBusyAction(null);
     }
@@ -206,7 +205,7 @@ export default function FriendsScreen() {
     const confirmed = await confirmAction({
       title: "Partager ton identifiant ?",
       message:
-        "Le message peut etre transmis hors de l'application. Verifie que tu fais confiance au destinataire.",
+        "Le message peut etre transmis hors de l'application. Vérifie que tu fais confiance au destinataire.",
       confirmLabel: "Partager"
     });
     if (!confirmed) return;
@@ -222,7 +221,7 @@ export default function FriendsScreen() {
         title: "Invitation SafeBack",
         message
       });
-      setSuccessMessage("Message de partage pret et envoye.");
+      setSuccessMessage("Message de partage pret et envoyé.");
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Impossible d'ouvrir le partage.");
     } finally {
@@ -273,7 +272,7 @@ export default function FriendsScreen() {
       title: isGuardian ? "Retirer ce garant ?" : "Definir ce garant ?",
       message: isGuardian
         ? "Ce proche ne recevra plus tes alertes de trajet."
-        : "Ce proche recevra tes infos de securite (depart, retards, SOS).",
+        : "Ce proche recevra tes infos de sécurité (depart, retards, SOS).",
       confirmLabel: isGuardian ? "Retirer" : "Definir"
     });
     if (!confirmed) return;
@@ -298,7 +297,7 @@ export default function FriendsScreen() {
 
   const requestCheck = async (ownerUserId: string) => {
     const confirmed = await confirmAction({
-      title: "Envoyer une verification ?",
+      title: "Envoyer une vérification ?",
       message: "SafeBack enverra une demande de confirmation rapide a ce proche.",
       confirmLabel: "Envoyer"
     });
@@ -310,7 +309,7 @@ export default function FriendsScreen() {
       setSuccessMessage("");
       const result = await requestGuardianWellbeingCheck(ownerUserId);
       if (result.status === "disabled") {
-        setSuccessMessage("Ce proche a desactive cette fonctionnalite.");
+        setSuccessMessage("Ce proche a désactive cette fonctionnalite.");
         return;
       }
       if (result.status === "not_guardian") {
@@ -319,11 +318,11 @@ export default function FriendsScreen() {
       }
       setSuccessMessage(
         result.has_recent_trip_24h
-          ? "Demande envoyee. Un trajet recent existe deja."
-          : "Demande envoyee. Aucun trajet recent detecte."
+          ? "Demande envoyée. Un trajet recent existe déjà."
+          : "Demande envoyée. Aucun trajet recent detecte."
       );
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d'envoyer la demande.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyér la demande.");
     } finally {
       setBusyAction(null);
     }
@@ -331,7 +330,7 @@ export default function FriendsScreen() {
 
   const pingArrival = async (friendUserId: string) => {
     const confirmed = await confirmAction({
-      title: "Lancer le ping d'arrivee ?",
+      title: "Lancer le ping d'arrivée ?",
       message:
         "Ton proche recevra une notification avec reponse Oui/Non. Tu seras informe automatiquement.",
       confirmLabel: "Envoyer"
@@ -344,18 +343,22 @@ export default function FriendsScreen() {
       setSuccessMessage("");
       const result = await sendFriendWellbeingPing(friendUserId);
       if (result.status === "already_pending") {
-        setSuccessMessage("Une verification est deja en attente pour ce proche.");
+        setSuccessMessage("Une vérification est déjà en attente pour ce proche.");
         return;
       }
-      setSuccessMessage("Demande de reassurance envoyee en 1 clic.");
+      setSuccessMessage("Demande de reassurance envoyée en 1 clic.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Impossible d'envoyer le ping d'arrivee.");
+      setErrorMessage(error?.message ?? "Impossible d'envoyér le ping d'arrivée.");
     } finally {
       setBusyAction(null);
     }
   };
 
   const ownerAsGuardianSet = useMemo(() => new Set(ownersWhoAssignedMe), [ownersWhoAssignedMe]);
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -387,7 +390,7 @@ export default function FriendsScreen() {
 
         <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">Reseau proches</Text>
         <Text className="mt-2 text-base text-[#475569]">
-          Ajoute des amis, discute, active tes garants et fais une verification arrivee en 1 clic.
+          Ajoute des amis, discute, active tes garants et fais une vérification'arrivée en 1 clic.
         </Text>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -441,6 +444,14 @@ export default function FriendsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            className="mt-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3"
+            onPress={() => router.push("/scan-friend-qr")}
+          >
+            <Text className="text-center text-sm font-semibold text-cyan-800">
+              Scanner un QR ami (caméra/photos)
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -489,7 +500,7 @@ export default function FriendsScreen() {
                       disabled={disabled}
                     >
                       <Text className="text-center text-xs font-semibold text-white">
-                        {alreadyFriend ? "Deja ami" : outgoingPending ? "Demande en attente" : "Envoyer une demande"}
+                        {alreadyFriend ? "Déjà ami" : outgoingPending ? "Demande en attente" : "Envoyer une demande"}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -614,7 +625,7 @@ export default function FriendsScreen() {
                     onPress={() => pingArrival(friend.friend_user_id)}
                     disabled={Boolean(busyAction)}
                   >
-                    <Text className="text-center text-xs font-semibold text-white">Ping arrivee (1 clic)</Text>
+                    <Text className="text-center text-xs font-semibold text-white">Ping arrivée (1 clic)</Text>
                   </TouchableOpacity>
 
                   {canAskForCheck ? (
@@ -626,7 +637,7 @@ export default function FriendsScreen() {
                       disabled={Boolean(busyAction)}
                     >
                       <Text className="text-center text-xs font-semibold text-white">
-                        Demander s'il est bien rentre
+                        Demander s'il est bien rentré
                       </Text>
                     </TouchableOpacity>
                   ) : null}
@@ -636,8 +647,8 @@ export default function FriendsScreen() {
           )}
         </View>
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

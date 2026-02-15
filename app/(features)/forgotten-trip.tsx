@@ -17,6 +17,7 @@ import {
   setForgottenTripConfig
 } from "../../src/lib/trips/forgottenTripStorage";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 type FavoriteAddress = {
   id: string;
@@ -80,9 +81,7 @@ export default function ForgottenTripSettingsScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const selectedIds = new Set(config.selectedFavoriteIds);
   const suggestedIds = useMemo(
@@ -118,7 +117,7 @@ export default function ForgottenTripSettingsScreen() {
       setErrorMessage("");
       setSuccessMessage("");
       await setForgottenTripConfig(config);
-      setSuccessMessage("Reglages enregistres.");
+      setSuccessMessage("Réglages enregistres.");
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur de sauvegarde.");
     } finally {
@@ -133,15 +132,19 @@ export default function ForgottenTripSettingsScreen() {
       setSuccessMessage("");
       await resetForgottenTripConfig();
       setConfig(DEFAULT_FORGOTTEN_TRIP_CONFIG);
-      setSuccessMessage("Reglages par defaut restaures.");
+      setSuccessMessage("Réglages par defaut restaures.");
     } catch (error: any) {
-      setErrorMessage(error?.message ?? "Erreur de reinitialisation.");
+      setErrorMessage(error?.message ?? "Erreur de réinitialisation.");
     } finally {
       setSaving(false);
     }
   };
 
   const busy = loading || saving;
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -201,7 +204,7 @@ export default function ForgottenTripSettingsScreen() {
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Lieux de predilection</Text>
           <Text className="mt-2 text-sm text-slate-600">
-            Selectionne les lieux a surveiller (maison, travail, amis...). Si rien n est selectionne,
+            Selectionne les lieux a surveiller (maison, travail, amis...). Si rien n'est selectionne,
             SafeBack utilise les labels detectes automatiquement.
           </Text>
           <TouchableOpacity
@@ -252,8 +255,8 @@ export default function ForgottenTripSettingsScreen() {
           </View>
         </View>
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
 
         <TouchableOpacity
           className={`mt-6 rounded-3xl px-6 py-5 shadow-lg ${
@@ -272,7 +275,7 @@ export default function ForgottenTripSettingsScreen() {
           disabled={busy}
         >
           <Text className="text-center text-base font-semibold text-amber-800">
-            Revenir aux reglages par defaut
+            Revenir aux réglages par defaut
           </Text>
         </TouchableOpacity>
       </ScrollView>

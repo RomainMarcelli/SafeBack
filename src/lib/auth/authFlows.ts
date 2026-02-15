@@ -33,7 +33,7 @@ export async function signUpAndMaybeCreateProfile(params: {
   });
   if (error) throw error;
 
-  // Supabase peut renvoyer un utilisateur sans session quand la confirmation email est activée.
+  // Supabase peut renvoyér un utilisateur sans session quand la confirmation email est activée.
   // Dans ce cas, on ignore l'upsert du profil pour éviter les erreurs RLS liées à auth.uid().
   if (!data.session?.user?.id) {
     return;

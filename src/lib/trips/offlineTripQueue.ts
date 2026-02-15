@@ -172,7 +172,7 @@ export async function syncPendingTripLaunches(): Promise<PendingTripSyncResult> 
       syncedCount += 1;
       await logPrivacyEvent({
         type: "offline_trip_synced",
-        message: "Trajet hors ligne synchronise et alertes envoyees.",
+        message: "Trajet hors ligne synchronise et alertes envoyées.",
         data: {
           pending_id: row.id,
           session_id: session.id

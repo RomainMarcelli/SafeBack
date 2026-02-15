@@ -146,7 +146,7 @@ describe("friendsDb", () => {
     expect(request.id).toBe("fr-1");
   });
 
-  it("respondToFriendRequest can auto-open conversation when accepted", async () => {
+  it("respondToFriendRequest can'auto-open conversation when'accepted", async () => {
     state.rpcHandler = async (fn) => {
       if (fn === "respond_friend_request") {
         return {

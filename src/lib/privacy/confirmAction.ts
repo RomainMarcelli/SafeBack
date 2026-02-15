@@ -30,3 +30,32 @@ export function confirmAction(params: {
     );
   });
 }
+
+export async function confirmSensitiveAction(params: {
+  firstTitle: string;
+  firstMessage: string;
+  secondTitle: string;
+  secondMessage: string;
+  firstConfirmLabel?: string;
+  secondConfirmLabel?: string;
+  delayMs?: number;
+}): Promise<boolean> {
+  // Double verrouillage anti-erreur: confirmation initiale + seconde validation'après délai.
+  const firstOk = await confirmAction({
+    title: params.firstTitle,
+    message: params.firstMessage,
+    confirmLabel: params.firstConfirmLabel ?? "Continuer"
+  });
+  if (!firstOk) return false;
+
+  const delayMs = Math.max(0, params.delayMs ?? 1400);
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return confirmAction({
+    title: params.secondTitle,
+    message: params.secondMessage,
+    confirmLabel: params.secondConfirmLabel ?? "Confirmer"
+  });
+}

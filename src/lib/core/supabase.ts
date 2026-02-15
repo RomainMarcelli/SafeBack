@@ -1,4 +1,4 @@
-// Client Supabase partagé : configuration auth persistante et garde-fou sur les variables d'environnement.
+// Client Supabase partagé : configuration'auth persistante et garde-fou sur les variables d'environnement.
 import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 

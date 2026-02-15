@@ -10,6 +10,7 @@ import { formatQuickArrivalMessage } from "../../src/lib/home/homeQuickActions";
 import { sendArrivalSignalToGuardians } from "../../src/lib/social/messagingDb";
 import { getPredefinedMessageConfig, resolvePredefinedMessage } from "../../src/lib/contacts/predefinedMessage";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 export default function QuickArrivalScreen() {
   const router = useRouter();
@@ -38,12 +39,12 @@ export default function QuickArrivalScreen() {
         await clearActiveSessionId();
         await syncSafeBackHomeWidget({
           status: "arrived",
-          note: "Confirmation envoyee",
+          note: "Confirmation envoyée",
           updatedAtIso: new Date().toISOString()
         });
         setMessage(formatQuickArrivalMessage(result.conversations));
       } catch (error: any) {
-        setErrorMessage(error?.message ?? "Impossible d envoyer la confirmation.");
+        setErrorMessage(error?.message ?? "Impossible d envoyér la confirmation.");
       } finally {
         setLoading(false);
       }
@@ -64,16 +65,16 @@ export default function QuickArrivalScreen() {
       <View className="flex-1 items-center justify-center px-6">
         <View className="w-full rounded-3xl border border-[#E7E0D7] bg-white/90 p-6 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Action rapide</Text>
-          <Text className="mt-3 text-3xl font-extrabold text-[#0F172A]">Je suis bien rentre</Text>
+          <Text className="mt-3 text-3xl font-extrabold text-[#0F172A]">Je suis bien rentré</Text>
           {loading ? (
             <View className="mt-4 flex-row items-center">
               <ActivityIndicator size="small" color="#334155" />
               <Text className="ml-2 text-sm text-slate-600">Envoi en cours...</Text>
             </View>
           ) : errorMessage ? (
-            <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
+            <FeedbackMessage kind="error" message={errorMessage} />
           ) : (
-            <Text className="mt-4 text-sm text-emerald-700">{message}</Text>
+            <FeedbackMessage kind="success" message={message} />
           )}
           <TouchableOpacity
             className="mt-5 rounded-2xl bg-[#111827] px-4 py-3"

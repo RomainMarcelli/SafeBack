@@ -51,7 +51,7 @@ describe("forgottenTrip helpers", () => {
     expect(result.nextState.insidePlaceId).toBeNull();
   });
 
-  it("does not trigger when an active session exists", () => {
+  it("does not trigger when'an'active session exists", () => {
     const result = detectForgottenTrip({
       coords: { latitude: 48.8605, longitude: 2.3600 },
       places: PLACES,

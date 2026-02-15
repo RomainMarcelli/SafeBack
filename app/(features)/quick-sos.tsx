@@ -10,6 +10,7 @@ import { getSessionById, listSessionContacts } from "../../src/lib/core/db";
 import { sendSosSignalToGuardians } from "../../src/lib/social/messagingDb";
 import { buildSmsUrl, buildSosMessage } from "../../src/lib/safety/sos";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 type SessionContact = {
   phone?: string | null;
@@ -131,9 +132,9 @@ export default function QuickSosScreen() {
               <Text className="ml-2 text-sm text-slate-600">Envoi en cours...</Text>
             </View>
           ) : errorMessage ? (
-            <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
+            <FeedbackMessage kind="error" message={errorMessage} />
           ) : (
-            <Text className="mt-4 text-sm text-rose-700">{message}</Text>
+            <FeedbackMessage kind="info" message={message} />
           )}
 
           <TouchableOpacity

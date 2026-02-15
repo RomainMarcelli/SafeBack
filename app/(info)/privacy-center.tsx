@@ -2,16 +2,23 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
-import { getProfile } from "../../src/lib/core/db";
+import { getProfile, upsertProfile } from "../../src/lib/core/db";
 import { getPendingTripQueueCount } from "../../src/lib/trips/offlineTripQueue";
 import { listPrivacyEvents, logPrivacyEvent, type PrivacyEvent } from "../../src/lib/privacy/privacyCenter";
+import { confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
+import { PUSH_CONSENT_KEY } from "../../src/lib/privacy/privacyKeys";
 import { runPrivacyReset } from "../../src/lib/privacy/privacyReset";
 import { getSafetyEscalationConfig } from "../../src/lib/safety/safetyEscalation";
+import { listFriends, type FriendWithProfile } from "../../src/lib/social/friendsDb";
+import { listGuardianAssignments } from "../../src/lib/social/messagingDb";
+import { getFriendOnlineState, listFriendMapPresence, type FriendMapPresence } from "../../src/lib/social/friendMap";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
@@ -32,8 +39,18 @@ export default function PrivacyCenterScreen() {
   const [successMessage, setSuccessMessage] = useState("");
   const [privacyEvents, setPrivacyEvents] = useState<PrivacyEvent[]>([]);
   const [guardianChecksEnabled, setGuardianChecksEnabled] = useState(false);
+  const [mapShareEnabled, setMapShareEnabled] = useState(false);
   const [safetyEnabled, setSafetyEnabled] = useState(false);
   const [pendingOfflineTrips, setPendingOfflineTrips] = useState(0);
+  const [friendRows, setFriendRows] = useState<
+    Array<{
+      friendId: string;
+      label: string;
+      guardian: boolean;
+      networkState: "online" | "recently_offline" | "offline";
+      lastPresenceAt?: string | null;
+    }>
+  >([]);
   const [permissions, setPermissions] = useState<{
     location: string;
     contacts: string;
@@ -45,7 +62,7 @@ export default function PrivacyCenterScreen() {
   });
 
   const loadData = async () => {
-    const [profile, safetyConfig, pendingCount, events, locationPerm, contactsPerm, notificationsPerm] =
+    const [profile, safetyConfig, pendingCount, events, locationPerm, contactsPerm, notificationsPerm, friends, guardianships] =
       await Promise.all([
         getProfile(),
         getSafetyEscalationConfig(),
@@ -60,10 +77,13 @@ export default function PrivacyCenterScreen() {
           } catch {
             return { status: "unavailable" } as { status: string };
           }
-        })()
+        })(),
+        listFriends(),
+        listGuardianAssignments()
       ]);
 
     setGuardianChecksEnabled(Boolean(profile?.allow_guardian_check_requests));
+    setMapShareEnabled(Boolean(profile?.map_share_enabled));
     setSafetyEnabled(Boolean(safetyConfig.enabled));
     setPendingOfflineTrips(pendingCount);
     setPrivacyEvents(events);
@@ -73,6 +93,35 @@ export default function PrivacyCenterScreen() {
       notifications: String(notificationsPerm.status ?? "unknown")
     };
     setPermissions(nextPermissions);
+
+    const presenceRows = await listFriendMapPresence(friends.map((friend) => friend.friend_user_id));
+    const presenceByUserId = new Map<string, FriendMapPresence>(
+      presenceRows.map((row) => [row.user_id, row])
+    );
+    const activeGuardianIds = new Set(
+      guardianships
+        .filter((row) => row.owner_user_id === userId && row.status === "active")
+        .map((row) => row.guardian_user_id)
+    );
+    const nextFriendRows = (friends as FriendWithProfile[]).map((friend) => {
+      const presence = presenceByUserId.get(friend.friend_user_id);
+      const username = String(friend.profile?.username ?? "").trim();
+      const fullName = `${String(friend.profile?.first_name ?? "").trim()} ${String(
+        friend.profile?.last_name ?? ""
+      ).trim()}`.trim();
+      return {
+        friendId: friend.friend_user_id,
+        label: username || fullName || `ID ${friend.profile?.public_id ?? friend.friend_user_id.slice(0, 8)}`,
+        guardian: activeGuardianIds.has(friend.friend_user_id),
+        networkState: getFriendOnlineState({
+          network_connected: presence?.network_connected,
+          updated_at: presence?.updated_at
+        }),
+        lastPresenceAt: presence?.updated_at ?? null
+      };
+    });
+    setFriendRows(nextFriendRows);
+
     await logPrivacyEvent({
       type: "permission_snapshot",
       message: "Etat des permissions rafraichi.",
@@ -101,7 +150,7 @@ export default function PrivacyCenterScreen() {
         setErrorMessage("");
         await loadData();
       } catch (error: any) {
-        setErrorMessage(error?.message ?? "Impossible de charger le centre de confidentialite.");
+        setErrorMessage(error?.message ?? "Impossible de charger le centre de confidentialité.");
       } finally {
         setLoading(false);
       }
@@ -127,7 +176,7 @@ export default function PrivacyCenterScreen() {
           </TouchableOpacity>
           <View className="rounded-full bg-[#111827] px-3 py-1">
             <Text className="text-[10px] font-semibold uppercase tracking-[3px] text-white">
-              Confidentialite
+              Confidentialité
             </Text>
           </View>
         </View>
@@ -143,10 +192,13 @@ export default function PrivacyCenterScreen() {
             Vérification garant: {guardianChecksEnabled ? "Activée" : "Désactivée"}
           </Text>
           <Text className="mt-2 text-sm text-slate-200">
+            Visibilité carte proches: {mapShareEnabled ? "Activée" : "Désactivée"}
+          </Text>
+          <Text className="mt-2 text-sm text-slate-200">
             Alertes de retard: {safetyEnabled ? "Activées" : "Désactivées"}
           </Text>
           <Text className="mt-2 text-sm text-slate-200">
-            Trajets en attente offline: {pendingOfflineTrips}
+            Trajets en'attente offline: {pendingOfflineTrips}
           </Text>
         </View>
 
@@ -172,6 +224,87 @@ export default function PrivacyCenterScreen() {
           >
             <Text className="text-center text-sm font-semibold text-slate-700">Rafraichir</Text>
           </TouchableOpacity>
+
+          <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">Reset ciblé en 1 clic</Text>
+          <View className="mt-2 flex-row gap-2">
+            <TouchableOpacity
+              className="flex-1 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3"
+              onPress={async () => {
+                try {
+                  setErrorMessage("");
+                  await upsertProfile({ map_share_enabled: false });
+                  await logPrivacyEvent({
+                    type: "share_disabled",
+                    message: "Visibilité carte désactivée depuis le centre de confidentialité."
+                  });
+                  await loadData();
+                  setSuccessMessage("Partage de position carte désactivé.");
+                } catch (error: any) {
+                  setErrorMessage(error?.message ?? "Impossible de désactiver la carte.");
+                }
+              }}
+            >
+              <Text className="text-center text-xs font-semibold text-indigo-700">Masquer ma position</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="flex-1 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3"
+              onPress={async () => {
+                try {
+                  setErrorMessage("");
+                  await upsertProfile({ allow_guardian_check_requests: false });
+                  await logPrivacyEvent({
+                    type: "guardian_check_disabled",
+                    message: "Demandes des garants désactivées depuis le centre de confidentialité."
+                  });
+                  await loadData();
+                  setSuccessMessage("Demandes des garants désactivées.");
+                } catch (error: any) {
+                  setErrorMessage(error?.message ?? "Impossible de mettre à jour les garants.");
+                }
+              }}
+            >
+              <Text className="text-center text-xs font-semibold text-amber-700">Bloquer les garants</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            onPress={async () => {
+              try {
+                setErrorMessage("");
+                await AsyncStorage.removeItem(PUSH_CONSENT_KEY);
+                await loadData();
+                setSuccessMessage("Préférence notifications réinitialisée (nouvelle demande au prochain besoin).");
+              } catch (error: any) {
+                setErrorMessage(error?.message ?? "Impossible de réinitialiser les notifications.");
+              }
+            }}
+          >
+            <Text className="text-center text-xs font-semibold text-slate-700">
+              Réinitialiser le consentement notifications
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+          <Text className="text-xs uppercase tracking-widest text-slate-500">Qui voit quoi (par proche)</Text>
+          {friendRows.length === 0 ? (
+            <Text className="mt-3 text-sm text-slate-500">Aucun proche configuré pour le moment.</Text>
+          ) : (
+            friendRows.map((row) => (
+              <View key={row.friendId} className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <Text className="text-sm font-semibold text-slate-900">{row.label}</Text>
+                <Text className="mt-1 text-xs text-slate-600">
+                  Position carte: {mapShareEnabled ? "Visible" : "Masquée"} · Garant: {row.guardian ? "Oui" : "Non"}
+                </Text>
+                <Text className="mt-1 text-xs text-slate-600">
+                  Statut réseau proche: {row.networkState === "online" ? "En ligne" : row.networkState === "recently_offline" ? "Connexion récente" : "Hors ligne"}
+                </Text>
+                <Text className="mt-1 text-xs text-slate-500">
+                  Historique d'accès (dernier signal): {row.lastPresenceAt ? formatDateTime(row.lastPresenceAt) : "Aucun"}
+                </Text>
+              </View>
+            ))
+          )}
         </View>
 
         <View className="mt-4 rounded-3xl border border-rose-200 bg-rose-50 p-5 shadow-sm">
@@ -185,6 +318,14 @@ export default function PrivacyCenterScreen() {
               busyReset ? "bg-rose-200" : "bg-rose-600"
             }`}
             onPress={async () => {
+              const confirmed = await confirmSensitiveAction({
+                firstTitle: "Lancer le reset global ?",
+                firstMessage: "Cette action coupe les partages et nettoie les files en'attente.",
+                secondTitle: "Confirmer le reset global",
+                secondMessage: "Confirme une seconde fois pour éviter une erreur de manipulation.",
+                secondConfirmLabel: "Oui, réinitialiser"
+              });
+              if (!confirmed) return;
               try {
                 setBusyReset(true);
                 setErrorMessage("");
@@ -195,7 +336,7 @@ export default function PrivacyCenterScreen() {
                   `Reset terminé. Partages arrêtés: ${result.disabledLiveShareCount}, trajets offline supprimés: ${result.clearedOfflineQueueCount}.`
                 );
               } catch (error: any) {
-                setErrorMessage(error?.message ?? "Impossible de reinitialiser.");
+                setErrorMessage(error?.message ?? "Impossible de réinitialiser.");
               } finally {
                 setBusyReset(false);
               }
@@ -203,7 +344,7 @@ export default function PrivacyCenterScreen() {
             disabled={busyReset}
           >
             <Text className="text-center text-sm font-semibold text-white">
-              {busyReset ? "Reset en cours..." : "Reinitialiser en 1 clic"}
+              {busyReset ? "Reset en cours..." : "Réinitialiser en 1 clic"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -213,7 +354,7 @@ export default function PrivacyCenterScreen() {
           {loading ? (
             <Text className="mt-3 text-sm text-slate-500">Chargement...</Text>
           ) : privacyEvents.length === 0 ? (
-            <Text className="mt-3 text-sm text-slate-500">Aucun evenement de confidentialite.</Text>
+            <Text className="mt-3 text-sm text-slate-500">Aucun evenement de confidentialité.</Text>
           ) : (
             privacyEvents.map((event) => (
               <View
@@ -228,10 +369,8 @@ export default function PrivacyCenterScreen() {
           )}
         </View>
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? (
-          <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

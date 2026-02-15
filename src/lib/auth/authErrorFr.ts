@@ -34,8 +34,8 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
 
   if (lower.includes("user already registered") || lower.includes("already registered")) {
     return {
-      title: "Compte deja existant",
-      message: "Un compte existe deja avec cette adresse email.",
+      title: "Compte déjà existant",
+      message: "Un compte existe déjà avec cette adresse email.",
       hint: "Connecte-toi ou utilise une autre adresse email.",
       code: code || undefined
     };
@@ -44,7 +44,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
   if (lower.includes("invalid email") || lower.includes("unable to validate email address")) {
     return {
       title: "Email invalide",
-      message: "Le format de l adresse email n est pas valide.",
+      message: "Le format de l adresse email n'est pas valide.",
       hint: "Exemple: prenom.nom@email.com",
       code: code || undefined
     };
@@ -55,7 +55,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
     return {
       title: "Mot de passe trop court",
       message: `Ton mot de passe doit contenir au moins ${minLength} caracteres.`,
-      hint: "Ajoute lettres, chiffres et caracteres speciaux pour plus de securite.",
+      hint: "Ajoute lettres, chiffres et caracteres speciaux pour plus de sécurité.",
       code: code || undefined
     };
   }
@@ -63,7 +63,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
   if (lower.includes("weak password") || lower.includes("password is too weak")) {
     return {
       title: "Mot de passe trop faible",
-      message: "Le mot de passe choisi n est pas assez robuste.",
+      message: "Le mot de passe choisi n'est pas assez robuste.",
       hint: "Utilise au moins 8 caracteres avec chiffres et symboles.",
       code: code || undefined
     };
@@ -72,7 +72,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
   if (lower.includes("signup is disabled")) {
     return {
       title: "Inscription indisponible",
-      message: "La creation de compte est actuellement desactivee.",
+      message: "La creation de compte est actuellement désactivée.",
       hint: "Reessaie plus tard ou contacte le support.",
       code: code || undefined
     };
@@ -85,7 +85,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
   ) {
     return {
       title: "Trop de tentatives",
-      message: "Trop de demandes d inscription ont ete envoyees en peu de temps.",
+      message: "Trop de demandes d inscription ont ete envoyées en peu de temps.",
       hint: "Attends quelques minutes avant de recommencer.",
       code: code || undefined
     };
@@ -93,9 +93,9 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
 
   if (lower.includes("failed to fetch") || lower.includes("network request failed")) {
     return {
-      title: "Probleme reseau",
+      title: "Problème reseau",
       message: "Impossible de contacter le serveur pour l inscription.",
-      hint: "Verifie ta connexion internet et reessaie.",
+      hint: "Vérifie ta connexion internet et reessaie.",
       code: code || undefined
     };
   }
@@ -112,7 +112,7 @@ export function toSignupErrorFr(error: unknown): SignupErrorUi {
   return {
     title: "Inscription impossible",
     message: "Une erreur est survenue pendant la creation du compte.",
-    hint: "Verifie les informations puis reessaie.",
+    hint: "Vérifie les informations puis reessaie.",
     code: code || undefined
   };
 }

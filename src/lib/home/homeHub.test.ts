@@ -16,7 +16,7 @@ describe("homeHub", () => {
 
   it("regroupe les items par section", () => {
     const sections = getHomeHubSections();
-    expect(sections.map((section) => section.id)).toEqual(["essentiel", "securite", "support"]);
+    expect(sections.map((section) => section.id)).toEqual(["essentiel", "sécurité", "support"]);
     const total = sections.reduce((sum, section) => sum + section.items.length, 0);
     expect(total).toBe(HOME_HUB_ITEMS.length);
   });

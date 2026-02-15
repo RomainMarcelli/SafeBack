@@ -80,7 +80,7 @@ export function findCurrentPlace(params: {
   const { coords, places, defaultRadiusMeters } = params;
   let best: { place: PreferredPlace; distance: number } | null = null;
 
-  // Choisit le lieu incluant la position actuelle avec la plus petite distance au centre.
+  // Choisit le lieu incluant la position'actuelle avec la plus petite distance au centre.
   for (const place of places) {
     const radius = Math.max(30, Math.round(place.radiusMeters ?? defaultRadiusMeters));
     const dist = distanceMeters(coords, {
