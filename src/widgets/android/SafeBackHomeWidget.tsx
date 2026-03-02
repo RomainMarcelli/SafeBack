@@ -102,7 +102,7 @@ export function SafeBackHomeWidget({ widgetInfo, state }: Props) {
           clickActionData={{ uri: "safeback://quick-arrival" }}
         >
           <TextWidget
-            text="Bien rentre"
+            text="Bien rentré"
             style={{ color: "#ECFDF5", fontSize: 11, textAlign: "center", fontWeight: "700" }}
           />
         </FlexWidget>

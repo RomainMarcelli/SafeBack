@@ -1,23 +1,55 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  abandonOnboardingConfigSession,
+  abandonOnboardingStepMetric,
+  clearOnboardingMonitoringState,
+  completeOnboardingConfigSession,
+  completeOnboardingStepMetric,
+  startOnboardingConfigSession,
+  startOnboardingStepMetric
+} from "../monitoring/onboardingMetrics";
 
-const ONBOARDING_VERSION = 1;
+const ONBOARDING_VERSION = 2;
 const ASSISTANT_VERSION = 1;
 
-export type OnboardingStepId = "profile" | "favorites" | "contacts" | "safety_review" | "first_trip";
+export type OnboardingStepId =
+  | "profile"
+  | "favorites"
+  | "contacts"
+  | "safety_review"
+  | "friends_map"
+  | "auto_checkins"
+  | "guardian_dashboard"
+  | "first_trip";
 
 export const ONBOARDING_STEP_ORDER: OnboardingStepId[] = [
   "profile",
   "favorites",
   "contacts",
   "safety_review",
+  "friends_map",
+  "auto_checkins",
+  "guardian_dashboard",
   "first_trip"
 ];
 
-export function getOnboardingStepRoute(stepId: OnboardingStepId): "/account" | "/favorites" | "/safety-alerts" | "/setup" {
+export function getOnboardingStepRoute(
+  stepId: OnboardingStepId
+):
+  | "/account"
+  | "/favorites"
+  | "/safety-alerts"
+  | "/friends-map"
+  | "/auto-checkins"
+  | "/guardian-dashboard"
+  | "/setup" {
   if (stepId === "profile") return "/account";
   if (stepId === "favorites") return "/favorites";
   if (stepId === "contacts") return "/favorites";
   if (stepId === "safety_review") return "/safety-alerts";
+  if (stepId === "friends_map") return "/friends-map";
+  if (stepId === "auto_checkins") return "/auto-checkins";
+  if (stepId === "guardian_dashboard") return "/guardian-dashboard";
   return "/setup";
 }
 
@@ -131,6 +163,9 @@ export async function setOnboardingDismissed(userId: string, dismissed: boolean)
     updatedAtIso: new Date().toISOString()
   };
   await saveState(userId, next);
+  if (dismissed && !current.completed) {
+    await abandonOnboardingConfigSession(userId, "prompt_dismissed");
+  }
   return next;
 }
 
@@ -157,6 +192,11 @@ export async function setOnboardingCompleted(userId: string): Promise<Onboarding
     completedAtIso: now
   };
   await saveState(userId, next);
+  const assistant = await getOnboardingAssistantSession(userId);
+  if (assistant.active) {
+    await completeOnboardingStepMetric(userId, assistant.stepId);
+  }
+  await completeOnboardingConfigSession(userId);
   return next;
 }
 
@@ -197,6 +237,8 @@ export async function startOnboardingAssistant(
     updatedAtIso: new Date().toISOString()
   };
   await saveAssistantSession(userId, next);
+  await startOnboardingConfigSession(userId);
+  await startOnboardingStepMetric(userId, stepId);
   return next;
 }
 
@@ -212,6 +254,10 @@ export async function setOnboardingAssistantStep(
     updatedAtIso: new Date().toISOString()
   };
   await saveAssistantSession(userId, next);
+  if (current.active) {
+    await completeOnboardingStepMetric(userId, current.stepId);
+  }
+  await startOnboardingStepMetric(userId, stepId);
   return next;
 }
 
@@ -223,5 +269,25 @@ export async function stopOnboardingAssistant(userId: string): Promise<Onboardin
     updatedAtIso: new Date().toISOString()
   };
   await saveAssistantSession(userId, next);
+  if (current.active) {
+    await abandonOnboardingStepMetric(userId, current.stepId, "assistant_stopped");
+  }
   return next;
+}
+
+export async function resetOnboardingExperience(userId: string): Promise<{
+  state: OnboardingState;
+  assistant: OnboardingAssistantSession;
+}> {
+  // Reset complet: progression onboarding + session assistant remise à l'étape profil.
+  const state = await resetOnboardingState(userId);
+  const assistant: OnboardingAssistantSession = {
+    version: ASSISTANT_VERSION,
+    active: false,
+    stepId: "profile",
+    updatedAtIso: new Date().toISOString()
+  };
+  await saveAssistantSession(userId, assistant);
+  await clearOnboardingMonitoringState(userId);
+  return { state, assistant };
 }

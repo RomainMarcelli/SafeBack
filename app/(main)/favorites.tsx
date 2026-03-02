@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { Linking, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
@@ -14,11 +14,14 @@ import {
 } from "../../src/lib/core/db";
 import { CONTACT_GROUPS, resolveContactGroup, type ContactGroupKey } from "../../src/lib/contacts/contactGroups";
 import {
+  getNextOnboardingStepId,
+  getOnboardingStepRoute,
   getOnboardingAssistantSession,
   setOnboardingAssistantStep,
   type OnboardingStepId
 } from "../../src/lib/home/onboarding";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
 
@@ -167,12 +170,6 @@ export default function FavoritesScreen() {
   }, []);
 
   useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
-  useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
@@ -204,9 +201,7 @@ export default function FavoritesScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return null;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const addAddress = async () => {
     if (!addrLabel.trim() || !addrValue.trim()) return;
@@ -224,13 +219,15 @@ export default function FavoritesScreen() {
         // Le parcours guidé n'avance que quand l'utilisateur ajoute réellement une nouvelle adresse.
         setGuideTransitioning(true);
         if (contacts.length > 0) {
-          await setOnboardingAssistantStep(userId, "safety_review");
-          setGuideStep("safety_review");
+          const nextStep = getNextOnboardingStepId("contacts") ?? "safety_review";
+          await setOnboardingAssistantStep(userId, nextStep);
+          setGuideStep(nextStep);
           setShowGuideHint(false);
-          router.push("/safety-alerts");
+          router.push(getOnboardingStepRoute(nextStep));
         } else {
-          await setOnboardingAssistantStep(userId, "contacts");
-          setGuideStep("contacts");
+          const nextStep = getNextOnboardingStepId("favorites") ?? "contacts";
+          await setOnboardingAssistantStep(userId, nextStep);
+          setGuideStep(nextStep);
           setShowGuideHint(true);
         }
       }
@@ -264,10 +261,11 @@ export default function FavoritesScreen() {
       if (guideStep === "contacts" && userId && !guideTransitioning) {
         // Même principe : passage à l'étape suivante uniquement après ajout d'un contact durant cette session.
         setGuideTransitioning(true);
-        await setOnboardingAssistantStep(userId, "safety_review");
-        setGuideStep("safety_review");
+        const nextStep = getNextOnboardingStepId("contacts") ?? "safety_review";
+        await setOnboardingAssistantStep(userId, nextStep);
+        setGuideStep(nextStep);
         setShowGuideHint(false);
-        router.push("/safety-alerts");
+        router.push(getOnboardingStepRoute(nextStep));
       }
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
@@ -349,6 +347,10 @@ export default function FavoritesScreen() {
     if (!email.trim()) return;
     await Linking.openURL(`mailto:${email.trim()}`);
   };
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -676,16 +678,14 @@ export default function FavoritesScreen() {
           ) : null}
         </View>
 
-        {errorMessage ? (
-          <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
 
       <Modal transparent visible={showGuideHint && (guideStep === "favorites" || guideStep === "contacts")} animationType="fade">
         <View className="flex-1 items-center justify-center bg-black/45 px-6">
           <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
             <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
-              Assistant - {guideStep === "favorites" ? "Etape 2" : "Etape 3"}
+              Assistant - {guideStep === "favorites" ? "Étape 2" : "Étape 3"}
             </Text>
             <Text className="mt-2 text-xl font-extrabold text-cyan-950">
               {guideStep === "favorites" ? "Ajoute une adresse favorite" : "Ajoute un proche de confiance"}

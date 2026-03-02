@@ -5,15 +5,15 @@ import { formatQuickArrivalMessage } from "./homeQuickActions";
 describe("homeQuickActions", () => {
   it("formats zero guardians", () => {
     expect(formatQuickArrivalMessage(0)).toBe(
-      "Confirmation envoyee. Aucun garant actif a notifier."
+      "Confirmation envoyée. Aucun garant actif a notifier."
     );
   });
 
   it("formats singular guardian", () => {
-    expect(formatQuickArrivalMessage(1)).toBe("Confirmation envoyee a 1 garant.");
+    expect(formatQuickArrivalMessage(1)).toBe("Confirmation envoyée a 1 garant.");
   });
 
   it("formats plural guardians", () => {
-    expect(formatQuickArrivalMessage(3)).toBe("Confirmation envoyee a 3 garants.");
+    expect(formatQuickArrivalMessage(3)).toBe("Confirmation envoyée a 3 garants.");
   });
 });

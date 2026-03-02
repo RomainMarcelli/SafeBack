@@ -6,6 +6,7 @@ import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-nativ
 import { SafeAreaView } from "react-native-safe-area-context";
 import { FEATURE_SECTIONS, type FeatureSection } from "../../src/lib/catalog/featuresCatalog";
 import { exportFeaturesGuidePdf } from "../../src/lib/catalog/featuresGuidePdf";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 // Mappe chaque couleur d'accent vers les classes utilitaires utilisées par les cartes.
 function accentStyle(accent: FeatureSection["accent"]) {
@@ -260,10 +261,8 @@ export default function FeaturesGuideScreen() {
           );
         })}
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? (
-          <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

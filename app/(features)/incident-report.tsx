@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { createIncidentReport } from "../../src/lib/core/db";
 import { exportIncidentReportPdf } from "../../src/lib/incidents/incidentReportPdf";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 type Severity = "low" | "medium" | "high";
 type IncidentType = "sos" | "delay" | "other";
@@ -256,8 +257,8 @@ export default function IncidentReportScreen() {
             />
           </View>
 
-          {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-          {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
+          {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+          {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
 
           <TouchableOpacity
             className={`mt-6 rounded-3xl px-6 py-5 shadow-lg ${

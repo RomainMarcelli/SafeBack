@@ -25,7 +25,7 @@ export default function AboutScreen() {
         </View>
 
         <Text className="mt-2 text-sm text-slate-600">
-          Informations generales sur l application et son environnement technique.
+          Informations generales sur l'application et son environnement technique.
         </Text>
 
         <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -17,7 +17,22 @@ vi.mock("../trips/offlineTripQueue", () => ({
 }));
 
 vi.mock("../safety/safetyEscalation", () => ({
-  setSafetyEscalationConfig: setSafetyEscalationConfigMock
+  setSafetyEscalationConfig: setSafetyEscalationConfigMock,
+  DEFAULT_SAFETY_ESCALATION_CONFIG: {
+    enabled: true,
+    reminderDelayMinutes: 10,
+    closeContactsDelayMinutes: 20,
+    stageOneDelayMinutes: 10,
+    stageTwoDelayMinutes: 20,
+    stageThreeDelayMinutes: 30,
+    stageOneMode: "in_app",
+    stageTwoMode: "push",
+    stageThreeMode: "sms",
+    secureArrivalEnabled: false,
+    secureArrivalRequireLocation: true,
+    secureArrivalRequireCharging: false,
+    secureArrivalMinTripMinutes: 3
+  }
 }));
 
 vi.mock("../core/db", () => ({
@@ -61,8 +76,18 @@ describe("privacyReset", () => {
     expect(clearPendingTripQueueMock).toHaveBeenCalledTimes(1);
     expect(setSafetyEscalationConfigMock).toHaveBeenCalledWith({
       enabled: false,
-      reminderDelayMinutes: 30,
-      closeContactsDelayMinutes: 120
+      reminderDelayMinutes: 10,
+      closeContactsDelayMinutes: 20,
+      stageOneDelayMinutes: 10,
+      stageTwoDelayMinutes: 20,
+      stageThreeDelayMinutes: 30,
+      stageOneMode: "in_app",
+      stageTwoMode: "push",
+      stageThreeMode: "sms",
+      secureArrivalEnabled: false,
+      secureArrivalRequireLocation: true,
+      secureArrivalRequireCharging: false,
+      secureArrivalMinTripMinutes: 3
     });
     expect(upsertProfileMock).toHaveBeenCalledWith({
       allow_guardian_check_requests: false

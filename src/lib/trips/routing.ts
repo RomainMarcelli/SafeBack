@@ -8,7 +8,7 @@ export type RouteResult = {
   coords: { latitude: number; longitude: number }[];
   durationMinutes: number;
   distanceKm: number;
-  provider: "osrm" | "google";
+  provider: "osrm" | "google" | "estimate";
 };
 
 export async function geocodeAddress(address: string) {
@@ -138,47 +138,82 @@ async function fetchGoogleRoute(from: string, to: string, apiKey: string, mode: 
   };
 }
 
+function haversineDistanceKm(
+  from: { lat: number; lon: number },
+  to: { lat: number; lon: number }
+) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(to.lat - from.lat);
+  const dLon = toRad(to.lon - from.lon);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(from.lat)) *
+      Math.cos(toRad(to.lat)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+async function estimateRouteByDistance(from: string, to: string, mode: RouteMode): Promise<RouteResult | null> {
+  const [fromCoords, toCoords] = await Promise.all([geocodeAddress(from), geocodeAddress(to)]);
+  if (!fromCoords || !toCoords) return null;
+
+  // Estimation simple et robuste: distance à vol d'oiseau + coefficient réaliste selon le mode.
+  const directDistance = haversineDistanceKm(
+    { lat: fromCoords.lat, lon: fromCoords.lon },
+    { lat: toCoords.lat, lon: toCoords.lon }
+  );
+  const distanceFactorByMode: Record<RouteMode, number> = {
+    walking: 1.28,
+    driving: 1.35,
+    transit: 1.42
+  };
+  const speedKmHByMode: Record<RouteMode, number> = {
+    walking: 4.8,
+    driving: 32,
+    transit: 20
+  };
+
+  const networkDistanceKm = Math.max(0.2, directDistance * distanceFactorByMode[mode]);
+  const durationMinutes = Math.max(1, Math.round((networkDistanceKm / speedKmHByMode[mode]) * 60));
+
+  return {
+    coords: [
+      { latitude: fromCoords.lat, longitude: fromCoords.lon },
+      { latitude: toCoords.lat, longitude: toCoords.lon }
+    ],
+    durationMinutes,
+    distanceKm: Math.round(networkDistanceKm * 10) / 10,
+    provider: "estimate"
+  };
+}
+
 export async function fetchRoute(from: string, to: string, mode: RouteMode): Promise<RouteResult | null> {
   if (!from.trim() || !to.trim()) return null;
+  // Nouveau mode de calcul: estimation stable basée sur géocodage + distance haversine.
+  // Objectif: éviter la fragilité des providers de routing externes sur mobile/dev.
+  const estimated = await estimateRouteByDistance(from, to, mode);
+  if (estimated) return estimated;
 
+  // Fallback final: conserve l'ancien comportement si l'estimation échoue.
   if (mode === "walking") {
-    // Priorité à Google quand la clé est disponible, sinon fallback OSRM.
     const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (key) {
-      const result = await fetchGoogleRoute(from, to, key, "walking");
-      return result;
+      const google = await fetchGoogleRoute(from, to, key, "walking");
+      if (google) return google;
     }
-    const primary = await fetchOsrmRoute(from, to, "foot");
-    if (primary) {
-      const minForDistance = Math.round((primary.distanceKm / 5) * 60);
-      if (primary.distanceKm > 0 && primary.durationMinutes <= primary.distanceKm * 10) {
-        const adjusted = {
-          ...primary,
-          durationMinutes: Math.max(primary.durationMinutes, minForDistance)
-        };
-        return adjusted;
-      }
-      return primary;
-    }
-    const fallback = await fetchOsrmRoute(from, to, "driving");
-    if (!fallback) return null;
-    // En secours "driving", on majore le temps pour se rapprocher d'un trajet piéton réaliste.
-    const adjusted = {
-      ...fallback,
-      durationMinutes: Math.round(fallback.durationMinutes * 1.6)
-    };
-    return adjusted;
+    return fetchOsrmRoute(from, to, "foot");
   }
   if (mode === "driving") {
     const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (key) {
-      const result = await fetchGoogleRoute(from, to, key, "driving");
-      return result;
+      const google = await fetchGoogleRoute(from, to, key, "driving");
+      if (google) return google;
     }
-    const result = await fetchOsrmRoute(from, to, "driving");
-    return result;
+    return fetchOsrmRoute(from, to, "driving");
   }
-
   const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!key) return null;
   return fetchGoogleRoute(from, to, key, "transit");

@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import { getSharedSessionSnapshot, type SharedSessionSnapshot } from "../../src/lib/core/db";
 import { normalizeSharedLocationPoints } from "../../src/lib/trips/liveShare";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 function formatLastUpdate(value?: string | null) {
   if (!value) return "Aucune position recue";
@@ -44,7 +45,7 @@ export default function FriendViewScreen() {
   const fetchSnapshot = async (isRefresh = false) => {
     if (!sessionId || !shareToken) {
       setLoading(false);
-      setErrorMessage("Lien invalide: parametres manquants.");
+      setErrorMessage("Lien invalide: paramètres manquants.");
       return;
     }
     try {
@@ -54,7 +55,7 @@ export default function FriendViewScreen() {
       const data = await getSharedSessionSnapshot({ sessionId, shareToken });
       if (!data) {
         setSnapshot(null);
-        setErrorMessage("Partage indisponible ou desactive.");
+        setErrorMessage("Partage indisponible ou désactive.");
       } else {
         setSnapshot(data);
       }
@@ -103,7 +104,7 @@ export default function FriendViewScreen() {
           <Text className="mt-2 text-sm text-slate-700">
             {lastPoint
               ? `${lastPoint.latitude.toFixed(5)}, ${lastPoint.longitude.toFixed(5)}`
-              : "En attente de donnees"}
+              : "En'attente de données"}
           </Text>
           <Text className="mt-2 text-xs text-slate-500">
             Mise a jour: {formatLastUpdate(lastPoint?.recordedAt ?? null)}
@@ -114,7 +115,7 @@ export default function FriendViewScreen() {
           {!mapRegion ? (
             <View className="flex-1 items-center justify-center px-6">
               <Text className="text-center text-sm text-slate-500">
-                {loading ? "Chargement des donnees..." : "Aucune position disponible pour le moment."}
+                {loading ? "Chargement des données..." : "Aucune position disponible pour le moment."}
               </Text>
             </View>
           ) : (
@@ -131,20 +132,15 @@ export default function FriendViewScreen() {
               ) : null}
               <Marker
                 coordinate={{ latitude: mapRegion.latitude, longitude: mapRegion.longitude }}
-                title="Position actuelle"
+                title="Position'actuelle"
               />
             </MapView>
           )}
         </View>
 
-        {errorMessage ? (
-          <View className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-            <Text className="text-sm text-amber-800">{errorMessage}</Text>
-          </View>
-        ) : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );
 }
-
 

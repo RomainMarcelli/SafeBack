@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { Link, useRouter } from "expo-router";
+import { Link, Redirect, useRouter } from "expo-router";
 import {
   Image,
   Keyboard,
@@ -18,15 +18,32 @@ import {
   type TextInputProps
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getProfile, upsertProfile } from "../../src/lib/core/db";
+import { deleteMyAccountCascade, getProfile, upsertProfile } from "../../src/lib/core/db";
 import { ensureMyPublicProfile, type PublicProfile } from "../../src/lib/social/friendsDb";
 import { clearActiveSessionId } from "../../src/lib/trips/activeSession";
+import { getAccessibilityPreferences } from "../../src/lib/accessibility/preferences";
+import { getThemeMode, setThemeMode, type ThemeMode } from "../../src/lib/theme/themePreferences";
+import { signInWithCredentials } from "../../src/lib/auth/authFlows";
+import { toSignInErrorFr } from "../../src/lib/auth/signInErrorFr";
+import { getHomeHubSections, type HomeHubItem } from "../../src/lib/home/homeHub";
 import {
+  getDiscoveryProgress,
+  hasVisitedRoute,
+  resetDiscoveryProgress
+} from "../../src/lib/home/discoveryProgress";
+import {
+  getNextOnboardingStepId,
+  getOnboardingStepRoute,
   getOnboardingAssistantSession,
+  resetOnboardingExperience,
   setOnboardingAssistantStep,
   type OnboardingStepId
 } from "../../src/lib/home/onboarding";
+import { confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
 import { supabase } from "../../src/lib/core/supabase";
+import { textScaleClass } from "../../src/theme/designSystem";
+import { useAppToast } from "../../src/components/AppToastProvider";
+import { getSensitiveJson, setSensitiveJson } from "../../src/lib/core/secureStorage";
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -37,8 +54,41 @@ function formatPhone(value: string) {
   return digits.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
 }
 
+function iconForShortcut(item: HomeHubItem): keyof typeof Ionicons.glyphMap {
+  if (item.href === "/setup") return "navigate-outline";
+  if (item.href === "/trips") return "time-outline";
+  if (item.href === "/messages") return "chatbubble-ellipses-outline";
+  if (item.href === "/favorites") return "heart-outline";
+  if (item.href === "/friends") return "people-outline";
+  if (item.href === "/friends-map") return "map-outline";
+  if (item.href === "/safety-alerts") return "shield-checkmark-outline";
+  if (item.href === "/auto-checkins") return "flash-outline";
+  if (item.href === "/guardian-dashboard") return "people-circle-outline";
+  if (item.href === "/live-companion") return "pulse-outline";
+  if (item.href === "/safety-drill") return "flask-outline";
+  if (item.href === "/forgotten-trip") return "location-outline";
+  if (item.href === "/notifications") return "notifications-outline";
+  if (item.href === "/incident-report") return "document-text-outline";
+  if (item.href === "/incidents") return "documents-outline";
+  if (item.href === "/privacy-center") return "shield-outline";
+  if (item.href === "/sessions-devices") return "phone-portrait-outline";
+  if (item.href === "/accessibility") return "accessibility-outline";
+  if (item.href === "/voice-assistant") return "mic-outline";
+  if (item.href === "/features-guide") return "book-outline";
+  return "sparkles-outline";
+}
+
+type DevTestAccount = {
+  label: string;
+  email: string;
+  password: string;
+};
+
+const DEV_TEST_ACCOUNTS_KEY = "safeback:dev:test-accounts:v1";
+
 export default function AccountScreen() {
   const router = useRouter();
+  const { showToast } = useAppToast();
   const [checking, setChecking] = useState(true);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -56,9 +106,27 @@ export default function AccountScreen() {
   const [guideTransitioning, setGuideTransitioning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [textScale, setTextScale] = useState<"normal" | "large">("normal");
+  const [highContrast, setHighContrast] = useState(false);
   const [activeInput, setActiveInput] = useState<
     "email" | "username" | "firstName" | "lastName" | "phone" | null
   >(null);
+  const [showQrPreview, setShowQrPreview] = useState(false);
+  const [themeMode, setThemeModeState] = useState<ThemeMode>("light");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [resettingExperience, setResettingExperience] = useState(false);
+  const [devTestAccounts, setDevTestAccounts] = useState<DevTestAccount[]>([]);
+  const [devLabel, setDevLabel] = useState("");
+  const [devEmail, setDevEmail] = useState("");
+  const [devPassword, setDevPassword] = useState("");
+  const [showAllShortcutsModal, setShowAllShortcutsModal] = useState(false);
+  const [visitedRoutes, setVisitedRoutes] = useState<string[]>([]);
+  const [shortcutSearchQuery, setShortcutSearchQuery] = useState("");
+  const [shortcutFilter, setShortcutFilter] = useState<"all" | "new" | "configured" | "todo">(
+    "all"
+  );
+  const shortcutSections = getHomeHubSections();
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data }) => {
@@ -82,11 +150,51 @@ export default function AccountScreen() {
         } catch {
           setPublicProfile(null);
         }
+        const accessibility = await getAccessibilityPreferences();
+        setTextScale(accessibility.textScale);
+        setHighContrast(accessibility.highContrast);
+        const theme = await getThemeMode();
+        setThemeModeState(theme);
+        if (data.session?.user.id) {
+          const discovery = await getDiscoveryProgress(data.session.user.id);
+          setVisitedRoutes(discovery.visitedRoutes);
+        }
+        if (__DEV__) {
+          const parsed = await getSensitiveJson<unknown[]>(DEV_TEST_ACCOUNTS_KEY, []);
+          if (Array.isArray(parsed)) {
+            setDevTestAccounts(
+              parsed
+                .map((item) => ({
+                  label: String((item as { label?: string }).label ?? "").trim(),
+                  email: String((item as { email?: string }).email ?? "").trim(),
+                  password: String((item as { password?: string }).password ?? "")
+                }))
+                .filter((item) => item.email.length > 0 && item.password.length > 0)
+            );
+          }
+        }
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur de chargement.");
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!authUserId || !showAllShortcutsModal) return;
+    getDiscoveryProgress(authUserId)
+      .then((discovery) => {
+        setVisitedRoutes(discovery.visitedRoutes);
+      })
+      .catch(() => {
+        // no-op
+      });
+  }, [authUserId, showAllShortcutsModal]);
+
+  useEffect(() => {
+    if (showAllShortcutsModal) return;
+    setShortcutSearchQuery("");
+    setShortcutFilter("all");
+  }, [showAllShortcutsModal]);
 
   useEffect(() => {
     if (!authUserId) return;
@@ -103,13 +211,19 @@ export default function AccountScreen() {
   }, [authUserId]);
 
   useEffect(() => {
-    if (!checking && !userEmail) {
-      router.replace("/auth");
-    }
-  }, [checking, userEmail, router]);
+    if (!errorMessage) return;
+    showToast({ kind: "error", message: errorMessage, durationMs: 5000 });
+    setErrorMessage("");
+  }, [errorMessage, showToast]);
+
+  useEffect(() => {
+    if (!successMessage) return;
+    showToast({ kind: "success", message: successMessage, durationMs: 4000 });
+    setSuccessMessage("");
+  }, [successMessage, showToast]);
 
   if (!checking && !userEmail) {
-    return null;
+    return <Redirect href="/auth" />;
   }
 
   const publicId = publicProfile?.public_id ?? "";
@@ -117,6 +231,8 @@ export default function AccountScreen() {
   const qrCodeUrl = qrPayload
     ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrPayload)}`
     : "";
+  const fontClasses = textScaleClass(textScale);
+  const darkMode = themeMode === "dark";
 
   const saveProfile = async () => {
     try {
@@ -141,9 +257,10 @@ export default function AccountScreen() {
         // Le parcours guidé n'avance qu'après une action explicite (enregistrer),
         // pour éviter qu'une réouverture d'étape saute automatiquement les pages suivantes.
         setGuideTransitioning(true);
-        await setOnboardingAssistantStep(authUserId, "favorites");
+        const nextStep = getNextOnboardingStepId("profile") ?? "favorites";
+        await setOnboardingAssistantStep(authUserId, nextStep);
         setShowGuideHint(false);
-        router.push("/favorites");
+        router.push(getOnboardingStepRoute(nextStep));
       }
     } catch (error: any) {
       setErrorMessage(error?.message ?? "Erreur sauvegarde.");
@@ -169,6 +286,148 @@ export default function AccountScreen() {
     }
   };
 
+  const toggleThemeMode = async (value: boolean) => {
+    try {
+      const nextMode: ThemeMode = value ? "dark" : "light";
+      await setThemeMode(nextMode);
+      setThemeModeState(nextMode);
+      setSuccessMessage(nextMode === "dark" ? "Mode sombre activé." : "Mode clair activé.");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de changer le thème.");
+    }
+  };
+
+  const persistDevAccounts = async (next: DevTestAccount[]) => {
+    setDevTestAccounts(next);
+    await setSensitiveJson(DEV_TEST_ACCOUNTS_KEY, next);
+  };
+
+  const addDevTestAccount = async () => {
+    try {
+      setErrorMessage("");
+      setSuccessMessage("");
+      setSwitchingAccount(true);
+      const emailValue = devEmail.trim().toLowerCase();
+      const passwordValue = devPassword;
+      console.log("[account/dev-switch] add:start", {
+        email: emailValue,
+        label: devLabel.trim() || null
+      });
+      if (!emailValue || !passwordValue) {
+        setErrorMessage("Renseigne l'email et le mot de passe du compte test.");
+        console.log("[account/dev-switch] add:blocked-missing-fields");
+        return;
+      }
+
+      // En mode test on accepte l'ajout immédiat sans vérification email/mot de passe côté Supabase.
+      // Le contrôle réel se fera seulement au moment du switch de compte.
+      const labelValue = devLabel.trim() || emailValue.split("@")[0];
+      const next = [
+        { label: labelValue, email: emailValue, password: passwordValue },
+        ...devTestAccounts.filter((item) => item.email !== emailValue)
+      ];
+      await persistDevAccounts(next);
+      console.log("[account/dev-switch] add:stored", {
+        email: emailValue,
+        totalAccounts: next.length
+      });
+      setDevLabel("");
+      setDevEmail("");
+      setDevPassword("");
+      setSuccessMessage("Compte test ajouté.");
+    } catch (error: any) {
+      console.log("[account/dev-switch] add:error", {
+        message: error?.message ?? "unknown"
+      });
+      setErrorMessage(error?.message ?? "Impossible d'ajouter ce compte test.");
+    } finally {
+      setSwitchingAccount(false);
+    }
+  };
+
+  const switchToDevAccount = async (account: DevTestAccount) => {
+    try {
+      setSwitchingAccount(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      console.log("[account/dev-switch] switch:start", {
+        email: account.email,
+        label: account.label
+      });
+      await signInWithCredentials({
+        identifier: account.email,
+        password: account.password
+      });
+      console.log("[account/dev-switch] switch:success", {
+        email: account.email
+      });
+      setSuccessMessage(`Connecté sur ${account.label}.`);
+      router.replace("/");
+    } catch (error: any) {
+      const mapped = toSignInErrorFr(error);
+      console.log("[account/dev-switch] switch:error", {
+        email: account.email,
+        kind: mapped.kind,
+        code: mapped.code ?? null,
+        message: mapped.message
+      });
+      if (mapped.kind === "email_not_confirmed") {
+        let resent = false;
+        try {
+          const { error: resendError } = await supabase.auth.resend({
+            type: "signup",
+            email: account.email
+          });
+          if (!resendError) {
+            resent = true;
+          }
+        } catch {
+          resent = false;
+        }
+        setErrorMessage(
+          resent
+            ? "Ce compte test n'est pas confirmé. Email de confirmation renvoyé, vérifie la boîte mail."
+            : "Ce compte test n'est pas confirmé. Active la confirmation email dans Supabase (Auth > Providers > Email) ou confirme l'adresse de ce compte."
+        );
+        return;
+      }
+      const finalMessage = mapped.message || error?.message || "Impossible de switcher ce compte test.";
+      setErrorMessage(finalMessage);
+    } finally {
+      setSwitchingAccount(false);
+    }
+  };
+
+  const deleteMyAccount = async () => {
+    const confirmed = await confirmSensitiveAction({
+      firstTitle: "Supprimer définitivement ton compte ?",
+      firstMessage:
+        "Cette action supprime ton profil et tes données SafeBack. Tu ne pourras pas revenir en arrière.",
+      secondTitle: "Dernière confirmation",
+      secondMessage: "Confirme la suppression définitive de ton compte.",
+      firstConfirmLabel: "Je comprends",
+      secondConfirmLabel: "Supprimer",
+      delayMs: 1000
+    });
+    if (!confirmed) return;
+
+    try {
+      setDeletingAccount(true);
+      setErrorMessage("");
+      await deleteMyAccountCascade();
+      await clearActiveSessionId();
+      await supabase.auth.signOut();
+      router.replace("/auth");
+    } catch (error: any) {
+      setErrorMessage(
+        error?.message ??
+          "Suppression impossible. Applique d'abord la migration SQL de suppression de compte."
+      );
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const restartSetupGuide = async () => {
     try {
       setRestartingGuide(true);
@@ -183,6 +442,38 @@ export default function AccountScreen() {
       setSuccessMessage("Menu du parcours guidé ouvert.");
     } finally {
       setRestartingGuide(false);
+    }
+  };
+
+  const resetOnboardingAndDiscoveryStatus = async () => {
+    if (!authUserId) return;
+    const confirmed = await confirmSensitiveAction({
+      firstTitle: "Réinitialiser l'expérience ?",
+      firstMessage:
+        "Cette action remet à zéro l'onboarding, le tutoriel complet et les badges Nouveau.",
+      secondTitle: "Dernière confirmation",
+      secondMessage:
+        "Confirme la réinitialisation complète de l'expérience SafeBack pour ce compte.",
+      firstConfirmLabel: "Continuer",
+      secondConfirmLabel: "Réinitialiser",
+      delayMs: 900
+    });
+    if (!confirmed) return;
+
+    try {
+      setResettingExperience(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      await resetOnboardingExperience(authUserId);
+      const next = await resetDiscoveryProgress(authUserId);
+      setVisitedRoutes(next.visitedRoutes);
+      setGuideStep(null);
+      setShowGuideHint(false);
+      setSuccessMessage("Onboarding et statut Nouveau réinitialisés.");
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de réinitialiser l'onboarding.");
+    } finally {
+      setResettingExperience(false);
     }
   };
 
@@ -222,12 +513,89 @@ export default function AccountScreen() {
     );
   };
 
+  const shortcutStatus = (href: string): "new" | "configured" | "todo" => {
+    if (hasVisitedRoute(visitedRoutes, href)) return "configured";
+    const essentialRoutes = new Set([
+      "/privacy-center",
+      "/sessions-devices",
+      "/safety-alerts",
+      "/auto-checkins",
+      "/friends-map"
+    ]);
+    if (essentialRoutes.has(href)) return "todo";
+    return "new";
+  };
+
+  const filteredShortcutSections = shortcutSections
+    .map((section) => {
+      const items = section.items.filter((item) => {
+        const status = shortcutStatus(item.href);
+        const query = shortcutSearchQuery.trim().toLowerCase();
+        const inQuery =
+          query.length === 0 ||
+          `${item.title} ${item.subtitle}`.toLowerCase().includes(query);
+        if (!inQuery) return false;
+        if (shortcutFilter === "all") return true;
+        return status === shortcutFilter;
+      });
+      return {
+        ...section,
+        items
+      };
+    })
+    .filter((section) => section.items.length > 0);
+
+  const shortcutStatusCounts = shortcutSections.reduce(
+    (acc, section) => {
+      for (const item of section.items) {
+        const status = shortcutStatus(item.href);
+        acc[status] += 1;
+      }
+      return acc;
+    },
+    { new: 0, configured: 0, todo: 0 }
+  );
+
+  const shortcutFilters: Array<{
+    id: "all" | "new" | "configured" | "todo";
+    label: string;
+    count: number;
+  }> = [
+    {
+      id: "all",
+      label: "Tout",
+      count: shortcutStatusCounts.new + shortcutStatusCounts.configured + shortcutStatusCounts.todo
+    },
+    { id: "new", label: "Nouveau", count: shortcutStatusCounts.new },
+    { id: "configured", label: "Configuré", count: shortcutStatusCounts.configured },
+    { id: "todo", label: "À faire", count: shortcutStatusCounts.todo }
+  ];
+
+  const quickShortcutTiles: Array<{
+    id: string;
+    title: string;
+    href: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    variant: "light" | "accent";
+  }> = [
+    { id: "setup", title: "Trajet", href: "/setup", icon: "navigate-outline", variant: "accent" },
+    { id: "trips", title: "Historique", href: "/trips", icon: "time-outline", variant: "light" },
+    { id: "messages", title: "Messages", href: "/messages", icon: "chatbubble-ellipses-outline", variant: "light" },
+    { id: "friends", title: "Amis", href: "/friends", icon: "people-outline", variant: "light" },
+    { id: "map", title: "Carte live", href: "/friends-map", icon: "map-outline", variant: "light" },
+    { id: "alerts", title: "Alertes", href: "/safety-alerts", icon: "shield-checkmark-outline", variant: "light" },
+    { id: "auto", title: "Auto check-ins", href: "/auto-checkins", icon: "flash-outline", variant: "light" },
+    { id: "guardians", title: "Dashboard proches", href: "/guardian-dashboard", icon: "people-circle-outline", variant: "light" },
+    { id: "notifications", title: "Notifications", href: "/notifications", icon: "notifications-outline", variant: "light" },
+    { id: "incidents", title: "Incidents", href: "/incidents", icon: "documents-outline", variant: "light" }
+  ];
+
   return (
-    <SafeAreaView className="flex-1 bg-[#F7F2EA]">
-      <StatusBar style="dark" />
-      <View className="absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[#FAD4A6] opacity-70" />
-      <View className="absolute top-32 -left-28 h-72 w-72 rounded-full bg-[#BFE9D6] opacity-60" />
-      <View className="absolute bottom-24 -right-32 h-72 w-72 rounded-full bg-[#C7DDF8] opacity-40" />
+    <SafeAreaView style={{ flex: 1, backgroundColor: darkMode ? "#0B1220" : "#F7F2EA" }}>
+      <StatusBar style={darkMode ? "light" : "dark"} />
+      <View className={`absolute -top-24 -right-16 h-56 w-56 rounded-full ${darkMode ? "bg-slate-800 opacity-60" : "bg-[#FAD4A6] opacity-70"}`} />
+      <View className={`absolute top-32 -left-28 h-72 w-72 rounded-full ${darkMode ? "bg-slate-700 opacity-50" : "bg-[#BFE9D6] opacity-60"}`} />
+      <View className={`absolute bottom-24 -right-32 h-72 w-72 rounded-full ${darkMode ? "bg-slate-900 opacity-60" : "bg-[#C7DDF8] opacity-40"}`} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -256,10 +624,10 @@ export default function AccountScreen() {
           </View>
         </View>
 
-        <Text className="mt-6 text-4xl font-extrabold text-[#0F172A]">
+        <Text className={`mt-6 font-extrabold ${darkMode ? "text-slate-100" : "text-[#0F172A]"} ${fontClasses.title}`}>
           Mon compte
         </Text>
-        <Text className="mt-2 text-base text-[#475569]">
+        <Text className={`mt-2 ${darkMode ? "text-slate-300" : "text-[#475569]"} ${fontClasses.body}`}>
           Mets à jour tes informations personnelles et tes favoris.
         </Text>
 
@@ -273,11 +641,17 @@ export default function AccountScreen() {
           </Text>
           {qrCodeUrl ? (
             <View className="mt-4 items-center">
-              <Image
-                source={{ uri: qrCodeUrl }}
-                style={{ width: 140, height: 140, borderRadius: 12 }}
-                resizeMode="cover"
-              />
+              <TouchableOpacity
+                onPress={() => setShowQrPreview(true)}
+                className="items-center rounded-2xl border border-slate-200 bg-white px-3 py-3"
+              >
+                <Image
+                  source={{ uri: qrCodeUrl }}
+                  style={{ width: 140, height: 140, borderRadius: 12 }}
+                  resizeMode="cover"
+                />
+                <Text className="mt-2 text-xs font-semibold text-slate-600">Appuie pour agrandir</Text>
+              </TouchableOpacity>
             </View>
           ) : null}
           <View className="mt-4 flex-row gap-2">
@@ -303,6 +677,11 @@ export default function AccountScreen() {
               </TouchableOpacity>
             </Link>
           </View>
+          <Link href="/scan-friend-qr" asChild>
+            <TouchableOpacity className="mt-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+              <Text className="text-center text-sm font-semibold text-cyan-800">Scanner un QR ami</Text>
+            </TouchableOpacity>
+          </Link>
         </View>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
@@ -347,13 +726,6 @@ export default function AccountScreen() {
           })}
         </View>
 
-        {errorMessage ? (
-          <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
-        ) : null}
-        {successMessage ? (
-          <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text>
-        ) : null}
-
         <TouchableOpacity
           className={`mt-6 rounded-3xl px-6 py-5 shadow-lg ${
             saving ? "bg-slate-300" : "bg-[#111827]"
@@ -391,137 +763,148 @@ export default function AccountScreen() {
           </View>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          className={`mt-3 rounded-3xl border px-5 py-4 ${
+            deletingAccount ? "border-slate-200 bg-slate-100" : "border-rose-300 bg-rose-100"
+          }`}
+          onPress={() => {
+            deleteMyAccount().catch(() => {
+              // no-op
+            });
+          }}
+          disabled={saving || signingOut || deletingAccount}
+        >
+          <View className="flex-row items-center justify-center">
+            <Ionicons
+              name="trash-outline"
+              size={18}
+              color={deletingAccount ? "#64748b" : "#9f1239"}
+            />
+            <Text
+              className={`ml-2 text-base font-semibold ${
+                deletingAccount ? "text-slate-500" : "text-rose-800"
+              }`}
+            >
+              {deletingAccount ? "Suppression..." : "Supprimer mon compte"}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
         <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Raccourcis</Text>
-
-          <View className="mt-3 flex-row gap-2">
-            <Link href="/favorites" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="heart-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Favoris</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/trips" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="time-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Mes trajets</Text>
-              </TouchableOpacity>
-            </Link>
+          <View className="flex-row items-center justify-between">
+            <View className="flex-1 pr-3">
+              <Text className="text-xs uppercase tracking-widest text-slate-500">Raccourcis</Text>
+              <Text className="mt-2 text-sm text-slate-600">
+                1 action principale: ouvre le hub complet, puis choisis l'écran voulu.
+              </Text>
+            </View>
+            <TouchableOpacity
+              className="rounded-full border border-slate-200 bg-white p-2"
+              onPress={() => {
+                toggleThemeMode(!darkMode).catch(() => {
+                  // no-op
+                });
+              }}
+            >
+              <Ionicons name={darkMode ? "sunny-outline" : "moon-outline"} size={18} color="#334155" />
+            </TouchableOpacity>
           </View>
 
+          <TouchableOpacity
+            className="mt-3 rounded-2xl bg-[#111827] px-3 py-3"
+            onPress={() => setShowAllShortcutsModal(true)}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              Voir tous les raccourcis
+            </Text>
+          </TouchableOpacity>
+          <View className="mt-3 flex-row flex-wrap">
+            {quickShortcutTiles.map((item) => (
+              <View key={`shortcut-tile-${item.id}`} className="mb-2 w-1/2 px-1">
+                <Link href={item.href} asChild>
+                  <TouchableOpacity
+                    className={`h-14 rounded-2xl border px-3 ${
+                      item.variant === "accent"
+                        ? "border-[#111827] bg-[#111827]"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <View className="flex-row items-center justify-center gap-2">
+                      <Ionicons
+                        name={item.icon}
+                        size={16}
+                        color={item.variant === "accent" ? "#ffffff" : "#334155"}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        className={`text-sm font-semibold ${
+                          item.variant === "accent" ? "text-white" : "text-slate-700"
+                        }`}
+                      >
+                        {item.title}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </Link>
+              </View>
+            ))}
+          </View>
+          <View
+            className={`mt-3 rounded-2xl border px-3 py-3 ${
+              highContrast ? "border-slate-900 bg-white" : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Accessibilité active</Text>
+            <Text className="mt-1 text-sm text-slate-700">
+              Texte: {textScale === "large" ? "Grand" : "Normal"} · Contraste:{" "}
+              {highContrast ? "Élevé" : "Standard"}
+            </Text>
+          </View>
           <View className="mt-2 flex-row gap-2">
-            <Link href="/safety-alerts" asChild>
+            <Link href="/accessibility" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="shield-checkmark-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Alertes</Text>
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Accessibilité
+                </Text>
               </TouchableOpacity>
             </Link>
-            <Link href="/help" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="help-circle-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Aide</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-
-          <View className="mt-2">
-            <Link href="/features-guide" asChild>
-              <TouchableOpacity className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
-                <Ionicons name="book-outline" size={18} color="#065f46" />
-                <Text className="mt-1 text-sm font-semibold text-emerald-800">
-                  Guide complet des fonctionnalités
+            <Link href="/voice-assistant" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-cyan-700">
+                  Assistant vocal
                 </Text>
               </TouchableOpacity>
             </Link>
           </View>
-
-          <View className="mt-2">
+          <View className="mt-2 flex-row gap-2">
             <Link href="/privacy-center" asChild>
-              <TouchableOpacity className="rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
-                <Ionicons name="shield-outline" size={18} color="#4338ca" />
-                <Text className="mt-1 text-sm font-semibold text-indigo-800">
-                  Centre de confidentialité
+              <TouchableOpacity className="flex-1 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-indigo-700">
+                  Confidentialité
+                </Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/sessions-devices" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Appareils
                 </Text>
               </TouchableOpacity>
             </Link>
           </View>
-
           <View className="mt-2 flex-row gap-2">
-            <Link href="/forgotten-trip" asChild>
+            <Link href="/legal/privacy" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="location-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Trajet oublié</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/messages" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="chatbubble-ellipses-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Messages</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-
-          <View className="mt-2">
-            <Link href="/auto-checkins" asChild>
-              <TouchableOpacity className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3">
-                <Ionicons name="flash-outline" size={18} color="#065f46" />
-                <Text className="mt-1 text-sm font-semibold text-emerald-800">
-                  Arrivées auto (Snap)
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Politique de confidentialité
                 </Text>
               </TouchableOpacity>
             </Link>
-          </View>
-
-          <View className="mt-2 flex-row gap-2">
-            <Link href="/notifications" asChild>
+            <Link href="/legal/terms" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="notifications-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Notifications</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/friends" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="people-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Amis</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-
-          <View className="mt-2 flex-row gap-2">
-            <Link href="/incidents" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="document-text-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Incidents</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/quick-sos" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-3">
-                <Ionicons name="warning-outline" size={18} color="#be123c" />
-                <Text className="mt-1 text-sm font-semibold text-rose-700">SOS rapide</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-
-          <View className="mt-2">
-            <Link href="/contact-groups" asChild>
-              <TouchableOpacity className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="layers-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Groupes</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-
-          <View className="mt-2 flex-row gap-2">
-            <Link href="/about" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="information-circle-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">À propos</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/legal" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                <Ionicons name="document-text-outline" size={18} color="#334155" />
-                <Text className="mt-1 text-sm font-semibold text-slate-800">Mentions</Text>
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Conditions d utilisation
+                </Text>
               </TouchableOpacity>
             </Link>
           </View>
@@ -542,6 +925,117 @@ export default function AccountScreen() {
             </Text>
           </View>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          className={`mt-3 rounded-3xl border px-4 py-4 ${
+            resettingExperience ? "border-amber-200 bg-amber-100" : "border-amber-200 bg-amber-50"
+          }`}
+          onPress={() => {
+            resetOnboardingAndDiscoveryStatus().catch(() => {
+              // no-op
+            });
+          }}
+          disabled={resettingExperience}
+        >
+          <View className="flex-row items-center justify-center">
+            <Ionicons name="refresh-circle-outline" size={18} color="#b45309" />
+            <Text className="ml-2 text-sm font-semibold text-amber-800">
+              {resettingExperience
+                ? "Réinitialisation..."
+                : "Réinitialiser onboarding + statut Nouveau"}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {__DEV__ ? (
+          <View className="mt-4 rounded-3xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
+            <Text className="text-xs uppercase tracking-widest text-violet-700">
+              Test multi-comptes (DEV)
+            </Text>
+            <Text className="mt-2 text-xs text-violet-700">
+              Garde ici plusieurs comptes de test et switch en 1 clic.
+            </Text>
+            <TextInput
+              className="mt-3 rounded-2xl border border-violet-200 bg-white px-4 py-3 text-sm text-slate-900"
+              placeholder="Label (ex: Compte A)"
+              placeholderTextColor="#a78bfa"
+              value={devLabel}
+              onChangeText={setDevLabel}
+            />
+            <TextInput
+              className="mt-2 rounded-2xl border border-violet-200 bg-white px-4 py-3 text-sm text-slate-900"
+              placeholder="email@test.com"
+              placeholderTextColor="#a78bfa"
+              value={devEmail}
+              onChangeText={setDevEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <TextInput
+              className="mt-2 rounded-2xl border border-violet-200 bg-white px-4 py-3 text-sm text-slate-900"
+              placeholder="Mot de passe test"
+              placeholderTextColor="#a78bfa"
+              value={devPassword}
+              onChangeText={setDevPassword}
+              autoCapitalize="none"
+              secureTextEntry
+            />
+            <TouchableOpacity
+              className="mt-2 rounded-2xl bg-violet-700 px-4 py-3"
+              onPress={() => {
+                addDevTestAccount().catch(() => {
+                  // no-op
+                });
+              }}
+              disabled={!devEmail.trim() || !devPassword || switchingAccount}
+            >
+              <Text className="text-center text-sm font-semibold text-white">
+                {switchingAccount ? "Vérification..." : "Ajouter compte test"}
+              </Text>
+            </TouchableOpacity>
+
+            {devTestAccounts.map((account) => (
+              <View
+                key={`dev-account-${account.email}`}
+                className="mt-2 flex-row items-center justify-between rounded-2xl border border-violet-200 bg-white px-3 py-3"
+              >
+                <View className="flex-1 pr-2">
+                  <Text className="text-sm font-semibold text-violet-900">{account.label}</Text>
+                  <Text className="text-xs text-violet-700">{account.email}</Text>
+                </View>
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    className={`rounded-xl px-3 py-2 ${switchingAccount ? "bg-slate-300" : "bg-violet-700"}`}
+                    onPress={() => {
+                      switchToDevAccount(account).catch(() => {
+                        // no-op
+                      });
+                    }}
+                    disabled={switchingAccount}
+                  >
+                    <Text className="text-xs font-semibold uppercase tracking-widest text-white">
+                      Switch
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="rounded-xl border border-violet-200 bg-white px-3 py-2"
+                    onPress={() => {
+                      const next = devTestAccounts.filter((item) => item.email !== account.email);
+                      persistDevAccounts(next).catch(() => {
+                        // no-op
+                      });
+                    }}
+                    disabled={switchingAccount}
+                  >
+                    <Text className="text-xs font-semibold uppercase tracking-widest text-violet-700">
+                      Retirer
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
@@ -550,13 +1044,13 @@ export default function AccountScreen() {
         <View className="flex-1 items-center justify-center bg-black/45 px-6">
           <View className="w-full rounded-3xl border border-cyan-200 bg-[#F0FDFF] p-5 shadow-lg">
             <Text className="text-[11px] font-semibold uppercase tracking-[2px] text-cyan-700">
-              Assistant - Etape 1
+              Assistant - Étape 1
             </Text>
             <Text className="mt-2 text-xl font-extrabold text-cyan-950">
               Complète ton profil
             </Text>
             <Text className="mt-2 text-sm text-cyan-900/80">
-              Renseigne au minimum un nom ou pseudo ET un numéro de téléphone. Dès que c est rempli,
+              Renseigne au minimum un nom ou pseudo ET un numéro de téléphone. Dès que c'est rempli,
               on passe automatiquement à l étape suivante.
             </Text>
             <View className="mt-4 rounded-2xl border border-cyan-200 bg-white px-3 py-3">
@@ -570,6 +1064,168 @@ export default function AccountScreen() {
             >
               <Text className="text-center text-sm font-semibold text-white">Compris</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={showQrPreview} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/70 px-6">
+          <View className="w-full rounded-3xl border border-slate-200 bg-white p-5">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Mon QR SafeBack</Text>
+            {qrCodeUrl ? (
+              <View className="mt-4 items-center">
+                <Image
+                  source={{ uri: qrCodeUrl }}
+                  style={{ width: 280, height: 280, borderRadius: 16 }}
+                  resizeMode="cover"
+                />
+              </View>
+            ) : null}
+            <View className="mt-4 flex-row gap-2">
+              <TouchableOpacity
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                onPress={() => setShowQrPreview(false)}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-700">Fermer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                onPress={() => {
+                  setShowQrPreview(false);
+                  router.push("/scan-friend-qr");
+                }}
+              >
+                <Text className="text-center text-sm font-semibold text-white">Scanner un QR</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={showAllShortcutsModal}
+        animationType="slide"
+        onRequestClose={() => setShowAllShortcutsModal(false)}
+      >
+        <View className="flex-1 justify-end bg-black/45">
+          <View className="max-h-[88%] rounded-t-3xl bg-[#FFFCF7] px-6 pb-8 pt-5">
+            <View className="h-1.5 w-14 self-center rounded-full bg-slate-300" />
+            <View className="mt-4 flex-row items-center justify-between">
+              <Text className="text-xl font-extrabold text-[#0F172A]">Tous les raccourcis</Text>
+              <TouchableOpacity
+                className="rounded-full border border-slate-200 bg-white px-3 py-1"
+                onPress={() => setShowAllShortcutsModal(false)}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Fermer
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <View className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+              <View className="flex-row items-center">
+                <Ionicons name="search-outline" size={16} color="#64748b" />
+                <TextInput
+                  className="ml-2 flex-1 text-sm text-slate-900"
+                  placeholder="Rechercher un raccourci..."
+                  placeholderTextColor="#94a3b8"
+                  value={shortcutSearchQuery}
+                  onChangeText={setShortcutSearchQuery}
+                />
+                {shortcutSearchQuery.trim().length > 0 ? (
+                  <TouchableOpacity
+                    className="rounded-full bg-slate-100 px-2 py-1"
+                    onPress={() => setShortcutSearchQuery("")}
+                  >
+                    <Ionicons name="close" size={12} color="#334155" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-3"
+              contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+            >
+              {shortcutFilters.map((filter) => {
+                const active = shortcutFilter === filter.id;
+                return (
+                  <TouchableOpacity
+                    key={`shortcut-filter-${filter.id}`}
+                    className={`rounded-full border px-3 py-2 ${
+                      active ? "border-slate-900 bg-slate-900" : "border-slate-200 bg-white"
+                    }`}
+                    onPress={() => setShortcutFilter(filter.id)}
+                  >
+                    <Text
+                      className={`text-xs font-semibold uppercase tracking-wider ${
+                        active ? "text-white" : "text-slate-700"
+                      }`}
+                    >
+                      {filter.label} · {filter.count}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <ScrollView className="mt-4">
+              {filteredShortcutSections.map((section) => (
+                <View
+                  key={`shortcut-section-${section.id}`}
+                  className="mb-4 rounded-3xl border border-[#E7E0D7] bg-white p-4"
+                >
+                  <Text className="text-xs uppercase tracking-widest text-slate-500">{section.title}</Text>
+                  {section.items.map((item) => {
+                    const status = shortcutStatus(item.href);
+                    return (
+                      <Link key={item.id} href={item.href} asChild>
+                        <TouchableOpacity
+                          className="mt-2 flex-row items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3"
+                          onPress={() => setShowAllShortcutsModal(false)}
+                        >
+                          <Ionicons name={iconForShortcut(item)} size={16} color="#334155" />
+                          <View className="ml-3 flex-1">
+                            <View className="flex-row items-center gap-2">
+                              <Text className="text-sm font-semibold text-slate-900">{item.title}</Text>
+                              {status === "new" ? (
+                                <View className="rounded-full bg-cyan-100 px-2 py-0.5">
+                                  <Text className="text-[10px] font-semibold uppercase tracking-wider text-cyan-700">
+                                    Nouveau
+                                  </Text>
+                                </View>
+                              ) : status === "configured" ? (
+                                <View className="rounded-full bg-emerald-100 px-2 py-0.5">
+                                  <Text className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                                    Configuré
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View className="rounded-full bg-slate-200 px-2 py-0.5">
+                                  <Text className="text-[10px] font-semibold uppercase tracking-wider text-slate-700">
+                                    À faire
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text className="mt-0.5 text-xs text-slate-500">{item.subtitle}</Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+                        </TouchableOpacity>
+                      </Link>
+                    );
+                  })}
+                </View>
+              ))}
+              {filteredShortcutSections.length === 0 ? (
+                <View className="mt-2 rounded-3xl border border-slate-200 bg-white p-5">
+                  <Text className="text-center text-base font-semibold text-slate-900">Aucun raccourci trouvé</Text>
+                  <Text className="mt-2 text-center text-sm text-slate-600">
+                    Change le filtre ou la recherche pour afficher des pages.
+                  </Text>
+                </View>
+              ) : null}
+            </ScrollView>
           </View>
         </View>
       </Modal>

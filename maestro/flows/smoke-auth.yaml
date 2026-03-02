@@ -1,0 +1,8 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Smoke auth: ouverture app + session valide + arrivée sur l'accueil.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- assertVisible:
+    id: home-open-setup-button

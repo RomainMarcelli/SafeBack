@@ -1,0 +1,17 @@
+appId: ${MAESTRO_APP_ID}
+---
+# SOS: déclenchement rapide depuis l'accueil puis retour.
+- launchApp
+- openLink: "safeback:///"
+- runFlow: "../helpers/login-if-needed.yaml"
+- tapOn:
+    id: home-open-quick-sos-button
+- runFlow: "../helpers/accept-location-permission.yaml"
+- extendedWaitUntil:
+    visible:
+      id: quick-sos-back-home-button
+    timeout: 40000
+- tapOn:
+    id: quick-sos-back-home-button
+- assertVisible:
+    id: home-open-setup-button

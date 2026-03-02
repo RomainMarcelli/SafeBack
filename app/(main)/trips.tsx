@@ -1,15 +1,22 @@
 // Écran historique des trajets avec timeline sécurité et score de fiabilité.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
-import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Redirect, useRouter } from "expo-router";
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { deleteAllSessions, deleteSession, listSessions } from "../../src/lib/core/db";
 import { listSecurityTimelineEvents, type SecurityTimelineEvent } from "../../src/lib/social/messagingDb";
-import { getReliabilityScore, type ReliabilityScore } from "../../src/lib/trips/reliabilityScore";
+import {
+  getPersonalSafetyScore,
+  type PersonalSafetyScore
+} from "../../src/lib/trips/reliabilityScore";
 import { filterTripSessionsByQuery, getTimelineBadge } from "../../src/lib/trips/tripsUi";
 import { supabase } from "../../src/lib/core/supabase";
+import { confirmAction, confirmSensitiveAction } from "../../src/lib/privacy/confirmAction";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
+import { PremiumEmptyState } from "../../src/components/ui/PremiumEmptyState";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
 
 type SessionItem = {
   id: string;
@@ -34,9 +41,11 @@ export default function TripsScreen() {
   const [userId, setUserId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [timeline, setTimeline] = useState<SecurityTimelineEvent[]>([]);
-  const [reliability, setReliability] = useState<ReliabilityScore | null>(null);
+  const [reliability, setReliability] = useState<PersonalSafetyScore | null>(null);
+  const [showReliability, setShowReliability] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [query, setQuery] = useState("");
   const [deletingAll, setDeletingAll] = useState(false);
   const [activePanel, setActivePanel] = useState<"timeline" | "sessions">("timeline");
@@ -49,12 +58,6 @@ export default function TripsScreen() {
   }, []);
 
   useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
-  useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
@@ -62,7 +65,7 @@ export default function TripsScreen() {
         const [data, timelineEvents, reliabilityScore] = await Promise.all([
           listSessions(),
           listSecurityTimelineEvents(120),
-          getReliabilityScore()
+          getPersonalSafetyScore()
         ]);
         setSessions(data as SessionItem[]);
         setTimeline(timelineEvents);
@@ -75,13 +78,15 @@ export default function TripsScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return null;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const filteredSessions = useMemo(() => {
     return filterTripSessionsByQuery(sessions, query);
   }, [sessions, query]);
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -143,7 +148,17 @@ export default function TripsScreen() {
           </View>
         </View>
 
-        {reliability ? (
+        <TouchableOpacity
+          className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+          onPress={() => setShowReliability((prev) => !prev)}
+          disabled={!reliability}
+        >
+          <Text className={`text-center text-sm font-semibold ${reliability ? "text-slate-700" : "text-slate-400"}`}>
+            {showReliability ? "Masquer le score de fiabilité" : "Afficher le score de fiabilité"}
+          </Text>
+        </TouchableOpacity>
+
+        {showReliability && reliability ? (
           <View className="mt-6 rounded-3xl bg-[#111827] px-5 py-5 shadow-sm">
             <Text className="text-xs uppercase tracking-widest text-slate-300">Score fiabilite</Text>
             <Text className="mt-2 text-4xl font-extrabold text-white">{reliability.score}/100</Text>
@@ -158,13 +173,35 @@ export default function TripsScreen() {
                     : "Critique"}
             </Text>
             <Text className="mt-3 text-xs uppercase tracking-widest text-slate-400">
-              Recommandations
+              Recommandations hebdomadaires
             </Text>
             {reliability.recommendations.slice(0, 3).map((item, index) => (
               <Text key={`reco-${index}`} className="mt-2 text-sm text-slate-200">
                 - {item}
               </Text>
             ))}
+            <View className="mt-4 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3">
+              <Text className="text-[11px] uppercase tracking-widest text-slate-400">Tendance 7 jours</Text>
+              <View className="mt-2 flex-row items-end justify-between">
+                {reliability.weeklyTrend.map((point) => (
+                  <View key={`trend-${point.dayLabel}`} className="items-center">
+                    <View
+                      className="w-6 rounded-t-md bg-sky-500"
+                      style={{
+                        height: Math.max(8, Math.round((point.score / 100) * 56))
+                      }}
+                    />
+                    <Text className="mt-1 text-[10px] text-slate-400">{point.dayLabel}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text className="mt-3 text-xs text-slate-300">
+                Objectif: score ≥ {reliability.weeklyGoal.targetScore} pendant 5 jours.
+              </Text>
+              <Text className={`mt-1 text-xs font-semibold ${reliability.weeklyGoal.completed ? "text-emerald-400" : "text-amber-300"}`}>
+                {reliability.weeklyGoal.daysMeetingTarget}/7 jour(s) au niveau cible
+              </Text>
+            </View>
           </View>
         ) : null}
 
@@ -179,11 +216,18 @@ export default function TripsScreen() {
               </TouchableOpacity>
             </View>
             {loading ? (
-              <Text className="mt-3 text-sm text-slate-500">Chargement...</Text>
+              <View className="mt-3 gap-2">
+                <SkeletonCard />
+                <SkeletonCard />
+              </View>
             ) : timeline.length === 0 ? (
-              <Text className="mt-3 text-sm text-slate-500">
-                Aucun évènement de sécurité pour le moment.
-              </Text>
+              <View className="mt-3">
+                <PremiumEmptyState
+                  title="Timeline vide"
+                  description="Aucun événement de sécurité pour le moment."
+                  icon="time-outline"
+                />
+              </View>
             ) : (
               timeline.slice(0, 20).map((event) => {
                 const style = getTimelineBadge(event.type);
@@ -210,33 +254,27 @@ export default function TripsScreen() {
         ) : null}
 
         {activePanel === "sessions" && loading ? (
-          <Text className="mt-6 text-sm text-slate-500">Chargement...</Text>
+          <View className="mt-6 gap-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
         ) : activePanel === "sessions" && sessions.length === 0 ? (
-          <View className="mt-10 items-center justify-center rounded-3xl border border-[#E7E0D7] bg-white/90 p-6 shadow-sm">
-            <Text className="text-base font-semibold text-slate-800">
-              Aucun trajet pour l instant
-            </Text>
-            <Text className="mt-2 text-center text-sm text-slate-600">
-              Tu veux en lancer un nouveau ?
-            </Text>
-            <View className="mt-5 w-full">
-              <TouchableOpacity
-                className="rounded-2xl bg-[#111827] px-4 py-3"
-                onPress={() => router.replace("/setup")}
-              >
-                <Text className="text-center text-sm font-semibold text-white">
-                  Creer un trajet
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                onPress={() => router.replace("/")}
-              >
-                <Text className="text-center text-sm font-semibold text-slate-700">
-                  Retour accueil
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View className="mt-6">
+            <PremiumEmptyState
+              title="Aucun trajet pour l'instant"
+              description="Lance ton premier trajet pour démarrer l'historique sécurité."
+              icon="navigate-outline"
+              actionLabel="Créer un trajet"
+              onActionPress={() => router.replace("/setup")}
+            />
+            <TouchableOpacity
+              className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              onPress={() => router.replace("/")}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">
+                Retour accueil
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : activePanel === "sessions" ? (
           <View className="mt-6">
@@ -244,32 +282,33 @@ export default function TripsScreen() {
               className={`mb-4 rounded-2xl px-4 py-3 ${
                 deletingAll ? "bg-slate-200" : "bg-rose-600"
               }`}
-              onPress={() => {
+              onPress={async () => {
                 if (deletingAll) return;
-                Alert.alert(
-                  "Tout supprimer ?",
-                  "Cette action est definitive.",
-                  [
-                    { text: "Annuler", style: "cancel" },
-                    {
-                      text: "Supprimer",
-                      style: "destructive",
-                      onPress: async () => {
-                        try {
-                          setDeletingAll(true);
-                          await deleteAllSessions();
-                          setSessions([]);
-                          setQuery("");
-                        } catch (error: any) {
-                          setErrorMessage(error?.message ?? "Erreur suppression.");
-                        } finally {
-                          setDeletingAll(false);
-                        }
-                      }
-                    }
-                  ],
-                  { cancelable: true }
-                );
+                const confirmed = await confirmSensitiveAction({
+                  firstTitle: "Tout supprimer ?",
+                  firstMessage: "Tu vas supprimer l'historique complet des trajets.",
+                  secondTitle: "Confirmer la suppression totale",
+                  secondMessage: "Cette action est définitive.",
+                  secondConfirmLabel: "Supprimer tout"
+                });
+                if (!confirmed) return;
+                try {
+                  setDeletingAll(true);
+                  setErrorMessage("");
+                  const deletedCount = await deleteAllSessions();
+                  const refreshedSessions = await listSessions();
+                  setSessions(refreshedSessions as SessionItem[]);
+                  setQuery("");
+                  setSuccessMessage(
+                    deletedCount > 0
+                      ? `${deletedCount} trajet(s) supprimé(s).`
+                      : "Aucun trajet à supprimer."
+                  );
+                } catch (error: any) {
+                  setErrorMessage(error?.message ?? "Erreur suppression.");
+                } finally {
+                  setDeletingAll(false);
+                }
               }}
               disabled={deletingAll}
             >
@@ -285,7 +324,11 @@ export default function TripsScreen() {
               onChangeText={setQuery}
             />
             {filteredSessions.length === 0 ? (
-              <Text className="text-sm text-slate-600">Aucun trajet ne correspond.</Text>
+              <PremiumEmptyState
+                title="Aucun trajet trouvé"
+                description="Essaie un autre mot-clé (départ, arrivée, date)."
+                icon="search-outline"
+              />
             ) : null}
             {filteredSessions.map((session) => (
               <View
@@ -332,9 +375,17 @@ export default function TripsScreen() {
                 <TouchableOpacity
                   className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"
                   onPress={async () => {
+                    const confirmed = await confirmAction({
+                      title: "Supprimer ce trajet ?",
+                      message: "Cette suppression est définitive.",
+                      confirmLabel: "Supprimer"
+                    });
+                    if (!confirmed) return;
                     try {
+                      setErrorMessage("");
                       await deleteSession(session.id);
                       setSessions((prev) => prev.filter((item) => item.id !== session.id));
+                      setSuccessMessage("Trajet supprimé.");
                     } catch (error: any) {
                       setErrorMessage(error?.message ?? "Erreur suppression.");
                     }
@@ -349,9 +400,8 @@ export default function TripsScreen() {
           </View>
         ) : null}
 
-        {errorMessage ? (
-          <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text>
-        ) : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

@@ -45,6 +45,11 @@ export type Profile = {
   allow_guardian_check_requests?: boolean | null;
   map_share_enabled?: boolean | null;
   map_avatar?: string | null;
+  consent_location?: boolean | null;
+  consent_presence?: boolean | null;
+  consent_notifications?: boolean | null;
+  consent_live_share?: boolean | null;
+  consent_updated_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };

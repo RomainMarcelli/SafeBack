@@ -9,7 +9,7 @@ describe("authErrorFr", () => {
       code: "user_already_exists"
     });
 
-    expect(result.title).toBe("Compte deja existant");
+    expect(result.title).toBe("Compte déjà existant");
     expect(result.code).toBe("user_already_exists");
   });
 

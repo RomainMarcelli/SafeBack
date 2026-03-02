@@ -18,6 +18,9 @@ Ordre d execution:
 5. `migrations/005_guardian_check_requests.sql`
 6. `migrations/006_incident_reports.sql`
 7. `migrations/007_friend_map_and_wellbeing_ping.sql`
+8. `migrations/008_guardian_assignment_requests_and_voice_storage.sql`
+9. `migrations/009_delete_my_account.sql`
+10. `migrations/010_rgpd_export_and_retention.sql`
 
 ## Legacy
 - `legacy/supabase_legacy.sql` garde l ancien schema pour reference uniquement.

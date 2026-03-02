@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Stack, router, usePathname } from "expo-router";
+import { Slot, useRootNavigationState, useRouter } from "expo-router";
 import { Animated, Easing, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import * as Network from "expo-network";
+import * as QuickActions from "expo-quick-actions";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useQuickActionRouting } from "expo-quick-actions/router";
+import { isRouterAction } from "expo-quick-actions/router";
 import { supabase } from "../../src/lib/core/supabase";
 import { confirmAction } from "../../src/lib/privacy/confirmAction";
+import { PUSH_CONSENT_KEY } from "../../src/lib/privacy/privacyKeys";
 import { getUnreadNotificationsCount } from "../../src/lib/social/messagingDb";
+import { getProfile } from "../../src/lib/core/db";
 
 type TabItem = {
   key: string;
@@ -51,10 +55,14 @@ const TABS: TabItem[] = [
   }
 ];
 
-const PUSH_CONSENT_KEY = "safeback:push-consent-v1";
-
-function TabButton(props: { item: TabItem; active: boolean; onPress: () => void }) {
-  const { item, active, onPress } = props;
+function TabButton(props: {
+  item: TabItem;
+  active: boolean;
+  onPress: () => void;
+  showOnlineDot?: boolean;
+  online?: boolean;
+}) {
+  const { item, active, onPress, showOnlineDot = false, online = false } = props;
   const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
 
   useEffect(() => {
@@ -83,11 +91,28 @@ function TabButton(props: { item: TabItem; active: boolean; onPress: () => void 
   return (
     <TouchableOpacity
       onPress={onPress}
+      testID={`tab-${item.key}`}
       style={{ flex: 1, alignItems: "center", paddingVertical: 6 }}
       accessibilityRole="button"
+      accessibilityLabel={`Onglet ${item.label}`}
     >
       <Animated.View style={{ alignItems: "center", transform: [{ scale }, { translateY }] }}>
-        <Ionicons name={active ? item.iconActive : item.icon} size={20} color={color} />
+        <View style={{ position: "relative" }}>
+          <Ionicons name={active ? item.iconActive : item.icon} size={20} color={color} />
+          {showOnlineDot ? (
+            <View
+              style={{
+                position: "absolute",
+                right: -4,
+                top: -2,
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: online ? "#16A34A" : "#DC2626"
+              }}
+            />
+          ) : null}
+        </View>
         {item.badgeCount && item.badgeCount > 0 ? (
           <View
             style={{
@@ -127,21 +152,88 @@ function TabButton(props: { item: TabItem; active: boolean; onPress: () => void 
 }
 
 export default function MainLayout() {
-  // Le hook doit vivre dans un sous-layout (pas dans app/_layout.tsx) pour avoir un contexte nav valide.
-  useQuickActionRouting((action) => {
-    console.log("[quick-actions] received", {
-      id: action?.id ?? null,
-      href: (action as any)?.params?.href ?? null
-    });
-    return false;
-  });
-
-  const pathname = usePathname();
+  const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const insets = useSafeAreaInsets();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [online, setOnline] = useState<boolean>(true);
+  const [pendingQuickHref, setPendingQuickHref] = useState<string | null>(null);
+  const [activeHref, setActiveHref] = useState<string>("/");
+
+  const resolveActiveTabHref = (href: string) => {
+    if (href === "/") return "/";
+    const match = TABS.find((tab) => href === tab.href || href.startsWith(`${tab.href}/`));
+    return match?.href ?? "/";
+  };
+  const navigationReady = Boolean(rootNavigationState?.key);
+
+  useEffect(() => {
+    if (!navigationReady) return;
+    // Les quick actions restent désactivées en Expo Go / Dev Client pour éviter toute navigation précoce.
+    if (Constants.executionEnvironment !== "standalone") {
+      return;
+    }
+    // Les quick actions peuvent arriver avant que le navigateur soit prêt: on met en file d'attente.
+    const queueIfRouterAction = (action: QuickActions.Action | undefined) => {
+      if (!action || !isRouterAction(action)) return;
+      const href = action.params?.href;
+      if (typeof href !== "string" || href.length === 0) return;
+      setPendingQuickHref(href);
+    };
+
+    queueIfRouterAction(QuickActions.initial);
+    const sub = QuickActions.addListener((action) => {
+      queueIfRouterAction(action);
+    });
+
+    return () => sub.remove();
+  }, [navigationReady]);
+
+  useEffect(() => {
+    if (!navigationReady) return;
+    if (Constants.executionEnvironment !== "standalone") {
+      return;
+    }
+    if (!pendingQuickHref) return;
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryNavigate = (attempt: number) => {
+      if (cancelled) return;
+      try {
+        router.replace(pendingQuickHref as any);
+        setActiveHref(resolveActiveTabHref(pendingQuickHref));
+        setPendingQuickHref(null);
+      } catch (error) {
+        const message = String((error as { message?: string })?.message ?? "");
+        const isNavigationContextError = message.toLowerCase().includes("navigation context");
+        // Certains appareils déclenchent l'action rapide avant l'initialisation du container.
+        // On retente quelques fois sans casser le rendu global.
+        if (isNavigationContextError && attempt < 8) {
+          retryTimer = setTimeout(() => tryNavigate(attempt + 1), 120);
+          return;
+        }
+        console.log("[quick-actions] navigation delayed/failed", {
+          attempt: attempt + 1,
+          message
+        });
+        setPendingQuickHref(null);
+      }
+    };
+
+    retryTimer = setTimeout(() => tryNavigate(0), 0);
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [pendingQuickHref, navigationReady]);
 
   const ensurePushNotificationsConsent = async (): Promise<any> => {
     if (Constants.appOwnership === "expo") return null;
+    const profile = await getProfile().catch(() => null);
+    if (!profile?.consent_notifications) {
+      return null;
+    }
 
     const notificationsApi = await import("expo-notifications");
     const permission = await notificationsApi.getPermissionsAsync();
@@ -158,7 +250,7 @@ export default function MainLayout() {
     const approved = await confirmAction({
       title: "Activer les notifications ?",
       message:
-        "SafeBack peut t'alerter en direct (messages, demandes de verification, confirmations d'arrivee).",
+        "SafeBack peut t'alerter en direct (messages, demandes de vérification, confirmations d'arrivée).",
       confirmLabel: "Autoriser"
     });
 
@@ -175,6 +267,26 @@ export default function MainLayout() {
     await AsyncStorage.setItem(PUSH_CONSENT_KEY, "denied");
     return null;
   };
+
+  useEffect(() => {
+    let mounted = true;
+    Network.getNetworkStateAsync()
+      .then((state) => {
+        if (!mounted) return;
+        setOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setOnline(false);
+      });
+    const sub = Network.addNetworkStateListener((state) => {
+      setOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
+    });
+    return () => {
+      mounted = false;
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,13 +408,7 @@ export default function MainLayout() {
         setUnreadCount(0);
       }
     })();
-  }, [pathname, setUnreadCount]);
-
-  const activeHref = useMemo(() => {
-    if (pathname === "/") return "/";
-    const match = TABS.find((tab) => pathname === tab.href || pathname.startsWith(`${tab.href}/`));
-    return match?.href ?? "/";
-  }, [pathname]);
+  }, [setUnreadCount]);
 
   const tabsWithBadges = useMemo(
     () =>
@@ -319,8 +425,10 @@ export default function MainLayout() {
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Garde un navigateur dédié au groupe "(main)" pour garantir le contexte de navigation des écrans enfants. */}
-      <Stack screenOptions={{ headerShown: false }} />
+      {/* Slot: évite un navigateur imbriqué inutile et stabilise le contexte de navigation du groupe "(main)". */}
+      <View style={{ flex: 1 }}>
+        <Slot />
+      </View>
       <View
         style={{
           borderTopWidth: 1,
@@ -344,9 +452,21 @@ export default function MainLayout() {
                 key={tab.key}
                 item={tab}
                 active={active}
+                showOnlineDot={tab.key === "account"}
+                online={online}
                 onPress={() => {
+                  if (!navigationReady) return;
                   if (!active) {
-                    router.push(tab.href);
+                    try {
+                      // Navigation d'onglet non empilante: évite de conserver plusieurs écrans cachés actifs.
+                      router.replace(tab.href as any);
+                      setActiveHref(tab.href);
+                    } catch (error) {
+                      console.error("[main-layout/nav] tab push failed", {
+                        href: tab.href,
+                        message: String((error as { message?: string })?.message ?? error)
+                      });
+                    }
                   }
                 }}
               />
@@ -362,7 +482,17 @@ export default function MainLayout() {
             }}
           >
             <TouchableOpacity
-              onPress={() => router.push("/notifications")}
+              testID="notifications-fab"
+              onPress={() => {
+                if (!navigationReady) return;
+                try {
+                  router.push("/notifications");
+                } catch (error) {
+                  console.error("[main-layout/nav] notifications push failed", {
+                    message: String((error as { message?: string })?.message ?? error)
+                  });
+                }
+              }}
               style={{
                 width: 44,
                 height: 44,

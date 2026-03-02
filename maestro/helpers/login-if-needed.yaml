@@ -1,0 +1,35 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Sous-flow: authentifie l'utilisateur si l'écran de connexion est visible.
+# Pré-requis via variables d'environnement:
+# - MAESTRO_TEST_EMAIL
+# - MAESTRO_TEST_PASSWORD
+- runFlow:
+    when:
+      visible:
+        id: auth-identifier-input
+    commands:
+      - tapOn:
+          id: auth-identifier-input
+      - eraseText
+      - inputText: ${MAESTRO_TEST_EMAIL}
+      - tapOn:
+          id: auth-password-input
+      - eraseText
+      - inputText: ${MAESTRO_TEST_PASSWORD}
+      - hideKeyboard
+      - tapOn:
+          id: auth-login-button
+
+- extendedWaitUntil:
+    visible:
+      id: home-open-setup-button
+    timeout: 45000
+
+- runFlow:
+    when:
+      visible:
+        id: home-onboarding-prompt-later
+    commands:
+      - tapOn:
+          id: home-onboarding-prompt-later

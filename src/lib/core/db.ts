@@ -26,6 +26,17 @@ export type SharedSessionSnapshot = {
   points: SharedLocationPoint[];
 };
 
+export type UserDataExportBundle = {
+  generated_at: string;
+  user_id: string;
+  [key: string]: unknown;
+};
+
+export type DeleteMyAccountResult = {
+  deleted: boolean;
+  user_id?: string | null;
+};
+
 export async function listFavoriteAddresses(): Promise<FavoriteAddress[]> {
   const { data, error } = await supabase
     .from("favorite_addresses")
@@ -82,18 +93,29 @@ export async function upsertProfile(payload: {
   allow_guardian_check_requests?: boolean;
   map_share_enabled?: boolean;
   map_avatar?: string | null;
+  consent_location?: boolean;
+  consent_presence?: boolean;
+  consent_notifications?: boolean;
+  consent_live_share?: boolean;
 }): Promise<Profile> {
   const session = await supabase.auth.getSession();
   const userId = payload.user_id ?? session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
+  const hasConsentUpdate =
+    typeof payload.consent_location === "boolean" ||
+    typeof payload.consent_presence === "boolean" ||
+    typeof payload.consent_notifications === "boolean" ||
+    typeof payload.consent_live_share === "boolean";
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("profiles")
     .upsert({
       user_id: userId,
       ...payload,
-      updated_at: new Date().toISOString()
+      updated_at: nowIso,
+      ...(hasConsentUpdate ? { consent_updated_at: nowIso } : {})
     })
     .select()
     .single();
@@ -193,9 +215,21 @@ export async function listSessions(): Promise<Session[]> {
   return data as Session[];
 }
 
-export async function deleteAllSessions() {
-  const { error } = await supabase.from("sessions").delete().neq("id", "");
+export async function deleteAllSessions(): Promise<number> {
+  const session = await supabase.auth.getSession();
+  const userId = session.data.session?.user.id;
+  if (!userId) {
+    throw new Error("Utilisateur non'authentifie.");
+  }
+
+  // Suppression explicite par user_id pour éviter les filtres fragiles sur UUID (ex: neq "").
+  const { data, error } = await supabase
+    .from("sessions")
+    .delete()
+    .eq("user_id", userId)
+    .select("id");
   if (error) throw error;
+  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function deleteSession(id: string) {
@@ -234,7 +268,7 @@ export async function disableAllLiveShareSessions(): Promise<number> {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
   const { data, error } = await supabase
     .from("sessions")
@@ -295,7 +329,7 @@ export async function createIncidentReport(payload: {
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
 
   const { data, error } = await supabase
@@ -321,7 +355,7 @@ export async function listIncidentReports(limit = 100): Promise<IncidentReport[]
   const session = await supabase.auth.getSession();
   const userId = session.data.session?.user.id;
   if (!userId) {
-    throw new Error("Utilisateur non authentifie.");
+    throw new Error("Utilisateur non'authentifie.");
   }
 
   const { data, error } = await supabase
@@ -332,4 +366,16 @@ export async function listIncidentReports(limit = 100): Promise<IncidentReport[]
     .limit(limit);
   if (error) throw error;
   return (data ?? []) as IncidentReport[];
+}
+
+export async function exportMyData(): Promise<UserDataExportBundle> {
+  const { data, error } = await supabase.rpc("export_my_data");
+  if (error) throw error;
+  return (data ?? {}) as UserDataExportBundle;
+}
+
+export async function deleteMyAccountCascade(): Promise<DeleteMyAccountResult> {
+  const { data, error } = await supabase.rpc("delete_my_account");
+  if (error) throw error;
+  return (data ?? { deleted: false }) as DeleteMyAccountResult;
 }

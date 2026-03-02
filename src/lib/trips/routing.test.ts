@@ -1,4 +1,7 @@
-// Tests unitaires pour valider le comportement de `routing` et prévenir les régressions.
+// Tests unitaires du module de routing:
+// - géocodage avec fallbacks
+// - estimation locale du trajet
+// - fallback provider (Google) si le géocodage échoue.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchRoute, geocodeAddress } from "./routing";
 
@@ -17,6 +20,14 @@ function mockFetchSequence(responses: MockFetchResponse[]) {
   }
   vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
   return fetchMock;
+}
+
+function geocodeOk(lon: number, lat: number) {
+  return { json: { features: [{ geometry: { coordinates: [lon, lat] } }] } };
+}
+
+function geocodeFailAll() {
+  return [{ json: { features: [] } }, { json: { results: [] } }, { json: { results: [] } }];
 }
 
 const originalGoogleKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -60,9 +71,45 @@ describe("routing", () => {
     expect(result).toEqual({ lon: 2.31, lat: 48.83 });
   });
 
-  it("fetchRoute uses google directions when API key is present", async () => {
+  it("fetchRoute returns local estimate for walking", async () => {
+    const fetchMock = mockFetchSequence([geocodeOk(2.35, 48.86), geocodeOk(2.36, 48.87)]);
+
+    const route = await fetchRoute("A", "B", "walking");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(route?.provider).toBe("estimate");
+    expect(route?.distanceKm).toBe(1.7);
+    expect(route?.durationMinutes).toBe(21);
+    expect(route?.coords.length).toBe(2);
+  });
+
+  it("fetchRoute returns local estimate for driving", async () => {
+    const fetchMock = mockFetchSequence([geocodeOk(2.35, 48.86), geocodeOk(2.36, 48.87)]);
+
+    const route = await fetchRoute("A", "B", "driving");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(route?.provider).toBe("estimate");
+    expect(route?.distanceKm).toBe(1.8);
+    expect(route?.durationMinutes).toBe(3);
+  });
+
+  it("fetchRoute returns local estimate for transit even without Google key", async () => {
+    const fetchMock = mockFetchSequence([geocodeOk(2.35, 48.86), geocodeOk(2.36, 48.87)]);
+
+    const route = await fetchRoute("A", "B", "transit");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(route?.provider).toBe("estimate");
+    expect(route?.distanceKm).toBe(1.9);
+    expect(route?.durationMinutes).toBe(6);
+  });
+
+  it("fetchRoute uses Google fallback when estimate cannot geocode addresses", async () => {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY = "test-key";
     const fetchMock = mockFetchSequence([
+      ...geocodeFailAll(),
+      ...geocodeFailAll(),
       {
         json: {
           routes: [
@@ -75,20 +122,13 @@ describe("routing", () => {
       }
     ]);
 
-    const route = await fetchRoute("A", "B", "walking");
+    const route = await fetchRoute("A", "B", "driving");
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
     expect(route?.provider).toBe("google");
-    expect(route?.durationMinutes).toBe(30);
     expect(route?.distanceKm).toBe(5);
+    expect(route?.durationMinutes).toBe(30);
     expect(route?.coords.length).toBeGreaterThan(1);
-  });
-
-  it("fetchRoute transit returns null when Google key is missing", async () => {
-    vi.stubGlobal("fetch", vi.fn() as unknown as typeof fetch);
-    const route = await fetchRoute("A", "B", "transit");
-    expect(route).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("fetchRoute returns null when addresses are blank", async () => {
@@ -96,134 +136,5 @@ describe("routing", () => {
     await expect(fetchRoute(" ", "B", "walking")).resolves.toBeNull();
     await expect(fetchRoute("A", "   ", "driving")).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("fetchRoute walking adjusts OSRM duration when too optimistic", async () => {
-    const fetchMock = mockFetchSequence([
-      { json: { features: [{ geometry: { coordinates: [2.35, 48.86] } }] } },
-      { json: { features: [{ geometry: { coordinates: [2.4, 48.9] } }] } },
-      {
-        json: {
-          code: "Ok",
-          routes: [
-            {
-              geometry: { coordinates: [[2.35, 48.86], [2.4, 48.9]] },
-              duration: 600,
-              distance: 10000
-            }
-          ]
-        }
-      }
-    ]);
-
-    const route = await fetchRoute("A", "B", "walking");
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(route?.provider).toBe("osrm");
-    expect(route?.distanceKm).toBe(10);
-    expect(route?.durationMinutes).toBe(120);
-  });
-
-  it("fetchRoute walking falls back to driving profile and inflates duration", async () => {
-    const fetchMock = mockFetchSequence([
-      { json: { features: [{ geometry: { coordinates: [2.35, 48.86] } }] } },
-      { json: { features: [{ geometry: { coordinates: [2.36, 48.87] } }] } },
-      {
-        json: {
-          code: "NoRoute",
-          routes: []
-        }
-      },
-      { json: { features: [{ geometry: { coordinates: [2.35, 48.86] } }] } },
-      { json: { features: [{ geometry: { coordinates: [2.36, 48.87] } }] } },
-      {
-        json: {
-          code: "Ok",
-          routes: [
-            {
-              geometry: { coordinates: [[2.35, 48.86], [2.36, 48.87]] },
-              duration: 900,
-              distance: 1000
-            }
-          ]
-        }
-      }
-    ]);
-
-    const route = await fetchRoute("A", "B", "walking");
-
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-    expect(route?.provider).toBe("osrm");
-    expect(route?.durationMinutes).toBe(24);
-  });
-
-  it("fetchRoute driving uses google provider when key exists", async () => {
-    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY = "test-key";
-    const fetchMock = mockFetchSequence([
-      {
-        json: {
-          routes: [
-            {
-              legs: [{ duration: { value: 1200 }, distance: { value: 3000 } }],
-              overview_polyline: { points: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" }
-            }
-          ]
-        }
-      }
-    ]);
-
-    const route = await fetchRoute("A", "B", "driving");
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(route?.provider).toBe("google");
-    expect(route?.durationMinutes).toBe(20);
-  });
-
-  it("fetchRoute driving uses OSRM when key is missing", async () => {
-    const fetchMock = mockFetchSequence([
-      { json: { features: [{ geometry: { coordinates: [2.35, 48.86] } }] } },
-      { json: { features: [{ geometry: { coordinates: [2.36, 48.87] } }] } },
-      {
-        json: {
-          code: "Ok",
-          routes: [
-            {
-              geometry: { coordinates: [[2.35, 48.86], [2.36, 48.87]] },
-              duration: 600,
-              distance: 4000
-            }
-          ]
-        }
-      }
-    ]);
-
-    const route = await fetchRoute("A", "B", "driving");
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(route?.provider).toBe("osrm");
-    expect(route?.durationMinutes).toBe(10);
-    expect(route?.distanceKm).toBe(4);
-  });
-
-  it("fetchRoute transit uses google provider with API key", async () => {
-    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY = "test-key";
-    const fetchMock = mockFetchSequence([
-      {
-        json: {
-          routes: [
-            {
-              legs: [{ duration: { value: 2400 }, distance: { value: 8000 } }],
-              overview_polyline: { points: "_p~iF~ps|U_ulLnnqC_mqNvxq`@" }
-            }
-          ]
-        }
-      }
-    ]);
-
-    const route = await fetchRoute("A", "B", "transit");
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(route?.provider).toBe("google");
-    expect(route?.durationMinutes).toBe(40);
   });
 });

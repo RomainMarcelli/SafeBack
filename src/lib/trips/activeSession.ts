@@ -1,4 +1,4 @@
-// Stockage local de l'identifiant de session active pour coordonner les écrans et services.
+// Stockage local de l'identifiant de session'active pour coordonner les écrans et services.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const ACTIVE_SESSION_KEY = "safeback:active_session_id";

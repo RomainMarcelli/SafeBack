@@ -25,6 +25,7 @@ import {
 import { geocodeAddress } from "../../src/lib/trips/routing";
 import { supabase } from "../../src/lib/core/supabase";
 import { getWifiIdentity } from "../../src/lib/safety/wifiIdentity";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 type FavoriteAddress = {
   id: string;
@@ -82,12 +83,6 @@ export default function AutoCheckinsScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
   const refresh = async () => {
     const [config, favoriteRows, friendRows] = await Promise.all([
       getAutoCheckinConfig(),
@@ -115,9 +110,7 @@ export default function AutoCheckinsScreen() {
     })();
   }, [userId]);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const friendMap = useMemo(
     () => new Map(friends.map((friend) => [friend.friend_user_id, friend])),
@@ -254,6 +247,10 @@ export default function AutoCheckinsScreen() {
   };
 
   const busy = loading || saving;
+
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
@@ -618,8 +615,8 @@ export default function AutoCheckinsScreen() {
           )}
         </View>
 
-        {errorMessage ? <Text className="mt-4 text-sm text-red-600">{errorMessage}</Text> : null}
-        {successMessage ? <Text className="mt-4 text-sm text-emerald-600">{successMessage}</Text> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

@@ -318,7 +318,7 @@ begin
 
   if v_reverse_request.id is not null then
     update public.friend_requests fr
-    set status = 'accepted', updated_at = now()
+    set status = 'accepted'::public.friend_request_status, updated_at = now()
     where fr.id = v_reverse_request.id
     returning * into v_request;
 
@@ -327,10 +327,15 @@ begin
   end if;
 
   insert into public.friend_requests (requester_user_id, target_user_id, status, message)
-  values (v_user_id, p_target_user_id, 'pending', nullif(trim(p_message), ''))
+  values (
+    v_user_id,
+    p_target_user_id,
+    'pending'::public.friend_request_status,
+    nullif(trim(p_message), '')
+  )
   on conflict (requester_user_id, target_user_id)
   do update
-    set status = 'pending',
+    set status = 'pending'::public.friend_request_status,
         message = excluded.message,
         updated_at = now()
   returning * into v_request;
@@ -379,7 +384,11 @@ begin
 
   update public.friend_requests fr
   set
-    status = case when p_accept then 'accepted' else 'rejected' end,
+    status = case
+      when p_accept
+        then 'accepted'::public.friend_request_status
+      else 'rejected'::public.friend_request_status
+    end,
     updated_at = now()
   where fr.id = v_request.id
   returning * into v_request;

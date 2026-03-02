@@ -328,6 +328,415 @@ to anon, authenticated;
 commit;
 
 -- ============================================================================
+-- Migration 009: monitoring runtime + metriques UX
+-- ============================================================================
+
+begin;
+
+create table if not exists public.runtime_error_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text,
+  error_name text not null,
+  error_message text not null,
+  stack text,
+  fatal boolean not null default false,
+  context text,
+  data jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.ux_metric_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text,
+  metric_name text not null,
+  metric_value double precision,
+  duration_ms integer,
+  context text,
+  data jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists runtime_error_events_user_created_idx
+  on public.runtime_error_events(user_id, created_at desc);
+
+create index if not exists ux_metric_events_user_created_idx
+  on public.ux_metric_events(user_id, created_at desc);
+
+alter table public.runtime_error_events enable row level security;
+alter table public.ux_metric_events enable row level security;
+
+drop policy if exists runtime_error_events_select on public.runtime_error_events;
+create policy runtime_error_events_select
+on public.runtime_error_events
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists runtime_error_events_insert on public.runtime_error_events;
+create policy runtime_error_events_insert
+on public.runtime_error_events
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists runtime_error_events_delete on public.runtime_error_events;
+create policy runtime_error_events_delete
+on public.runtime_error_events
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_select on public.ux_metric_events;
+create policy ux_metric_events_select
+on public.ux_metric_events
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_insert on public.ux_metric_events;
+create policy ux_metric_events_insert
+on public.ux_metric_events
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists ux_metric_events_delete on public.ux_metric_events;
+create policy ux_metric_events_delete
+on public.ux_metric_events
+for delete
+using (auth.uid() = user_id);
+
+commit;
+
+-- ============================================================================
+-- Migration 008: sessions/appareils + consentements granulaires
+-- ============================================================================
+
+begin;
+
+-- Registre des appareils connectés pour permettre "déconnecter les autres".
+create table if not exists public.user_device_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  device_id text not null check (length(trim(device_id)) > 0),
+  device_label text not null default 'Appareil',
+  platform text not null default 'unknown',
+  app_version text,
+  last_seen_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, device_id)
+);
+
+create index if not exists user_device_sessions_user_seen_idx
+  on public.user_device_sessions(user_id, last_seen_at desc);
+
+create index if not exists user_device_sessions_user_revoked_idx
+  on public.user_device_sessions(user_id, revoked_at);
+
+create or replace function public.handle_user_device_sessions_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists user_device_sessions_set_updated_at on public.user_device_sessions;
+create trigger user_device_sessions_set_updated_at
+before update on public.user_device_sessions
+for each row
+execute function public.handle_user_device_sessions_updated_at();
+
+alter table public.user_device_sessions enable row level security;
+
+drop policy if exists user_device_sessions_select on public.user_device_sessions;
+create policy user_device_sessions_select
+on public.user_device_sessions
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_insert on public.user_device_sessions;
+create policy user_device_sessions_insert
+on public.user_device_sessions
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_update on public.user_device_sessions;
+create policy user_device_sessions_update
+on public.user_device_sessions
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists user_device_sessions_delete on public.user_device_sessions;
+create policy user_device_sessions_delete
+on public.user_device_sessions
+for delete
+using (auth.uid() = user_id);
+
+-- Consentements granulaires (position, présence, notifications, partage live).
+alter table public.profiles
+  add column if not exists consent_location boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_presence boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_notifications boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_live_share boolean not null default false;
+
+alter table public.profiles
+  add column if not exists consent_updated_at timestamptz;
+
+create or replace function public.revoke_other_device_sessions(
+  p_current_device_id text
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_revoked_count integer := 0;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  if coalesce(trim(p_current_device_id), '') = '' then
+    raise exception 'Appareil courant manquant';
+  end if;
+
+  update public.user_device_sessions s
+  set
+    revoked_at = now(),
+    updated_at = now()
+  where s.user_id = v_user_id
+    and s.device_id <> p_current_device_id
+    and s.revoked_at is null;
+
+  get diagnostics v_revoked_count = row_count;
+  return v_revoked_count;
+end;
+$$;
+
+grant execute on function public.revoke_other_device_sessions(text) to authenticated;
+
+commit;
+
+begin;
+
+create or replace function public.delete_my_account()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_user_id uuid;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  delete from public.friend_wellbeing_pings
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  delete from public.friend_map_presence
+  where user_id = v_user_id;
+
+  delete from public.guardianships
+  where owner_user_id = v_user_id
+     or guardian_user_id = v_user_id;
+
+  delete from public.friendships
+  where user_id = v_user_id
+     or friend_user_id = v_user_id;
+
+  delete from public.friend_requests
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  delete from public.messages
+  where sender_user_id = v_user_id;
+
+  delete from public.conversation_participants
+  where user_id = v_user_id;
+
+  delete from public.incident_reports
+  where user_id = v_user_id;
+
+  delete from public.app_notifications
+  where user_id = v_user_id;
+
+  delete from public.locations
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.session_contacts
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.sessions
+  where user_id = v_user_id;
+
+  delete from public.contacts
+  where user_id = v_user_id;
+
+  delete from public.favorite_addresses
+  where user_id = v_user_id;
+
+  delete from public.profiles
+  where user_id = v_user_id;
+
+  delete from auth.identities where user_id = v_user_id;
+  delete from auth.sessions where user_id = v_user_id;
+  delete from auth.users where id = v_user_id;
+
+  return jsonb_build_object('deleted', true);
+end;
+$$;
+
+grant execute on function public.delete_my_account() to authenticated;
+
+commit;
+
+begin;
+
+create or replace function public.request_guardian_assignment(
+  p_target_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_already_guardian boolean;
+  v_are_friends boolean;
+  v_already_requested boolean;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  if p_target_user_id is null then
+    raise exception 'Proche cible manquant';
+  end if;
+
+  if p_target_user_id = v_user_id then
+    raise exception 'Impossible de demander soi-meme';
+  end if;
+
+  select exists (
+    select 1
+    from public.guardianships g
+    where g.owner_user_id = v_user_id
+      and g.guardian_user_id = p_target_user_id
+      and g.status = 'active'
+  )
+  into v_already_guardian;
+
+  if v_already_guardian then
+    return jsonb_build_object('sent', false, 'status', 'already_guardian');
+  end if;
+
+  select exists (
+    select 1
+    from public.friendships f
+    where f.user_id = v_user_id
+      and f.friend_user_id = p_target_user_id
+  )
+  into v_are_friends;
+
+  if not v_are_friends then
+    return jsonb_build_object('sent', false, 'status', 'not_friend');
+  end if;
+
+  select exists (
+    select 1
+    from public.app_notifications n
+    where n.user_id = p_target_user_id
+      and n.notification_type = 'guardian_assignment_request'
+      and (n.data ->> 'owner_user_id')::uuid = v_user_id
+      and n.created_at >= now() - interval '12 hours'
+  )
+  into v_already_requested;
+
+  if v_already_requested then
+    return jsonb_build_object('sent', false, 'status', 'already_requested');
+  end if;
+
+  insert into public.app_notifications (user_id, notification_type, title, body, data)
+  values (
+    p_target_user_id,
+    'guardian_assignment_request',
+    'Demande de garant',
+    'Un proche souhaite que tu deviennes son garant sur SafeBack.',
+    jsonb_build_object(
+      'owner_user_id', v_user_id,
+      'target_user_id', p_target_user_id
+    )
+  );
+
+  insert into public.app_notifications (user_id, notification_type, title, body, data)
+  values (
+    v_user_id,
+    'guardian_assignment_request_sent',
+    'Demande envoyee',
+    'Ta demande de garant a ete envoyee.',
+    jsonb_build_object(
+      'owner_user_id', v_user_id,
+      'target_user_id', p_target_user_id
+    )
+  );
+
+  return jsonb_build_object('sent', true, 'status', 'sent');
+end;
+$$;
+
+grant execute on function public.request_guardian_assignment(uuid) to authenticated;
+
+insert into storage.buckets (id, name, public)
+values ('voice-notes', 'voice-notes', true)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists voice_notes_insert on storage.objects;
+create policy voice_notes_insert
+on storage.objects
+for insert
+to authenticated
+with check (bucket_id = 'voice-notes' and owner = auth.uid());
+
+drop policy if exists voice_notes_update on storage.objects;
+create policy voice_notes_update
+on storage.objects
+for update
+to authenticated
+using (bucket_id = 'voice-notes' and owner = auth.uid())
+with check (bucket_id = 'voice-notes' and owner = auth.uid());
+
+drop policy if exists voice_notes_delete on storage.objects;
+create policy voice_notes_delete
+on storage.objects
+for delete
+to authenticated
+using (bucket_id = 'voice-notes' and owner = auth.uid());
+
+commit;
+
+-- ============================================================================
 -- Migration 002: supabase/migrations/002_messaging_notifications.sql
 -- ============================================================================
 
@@ -1027,7 +1436,7 @@ begin
 
   if v_reverse_request.id is not null then
     update public.friend_requests fr
-    set status = 'accepted', updated_at = now()
+    set status = 'accepted'::public.friend_request_status, updated_at = now()
     where fr.id = v_reverse_request.id
     returning * into v_request;
 
@@ -1036,10 +1445,15 @@ begin
   end if;
 
   insert into public.friend_requests (requester_user_id, target_user_id, status, message)
-  values (v_user_id, p_target_user_id, 'pending', nullif(trim(p_message), ''))
+  values (
+    v_user_id,
+    p_target_user_id,
+    'pending'::public.friend_request_status,
+    nullif(trim(p_message), '')
+  )
   on conflict (requester_user_id, target_user_id)
   do update
-    set status = 'pending',
+    set status = 'pending'::public.friend_request_status,
         message = excluded.message,
         updated_at = now()
   returning * into v_request;
@@ -1088,7 +1502,11 @@ begin
 
   update public.friend_requests fr
   set
-    status = case when p_accept then 'accepted' else 'rejected' end,
+    status = case
+      when p_accept
+        then 'accepted'::public.friend_request_status
+      else 'rejected'::public.friend_request_status
+    end,
     updated_at = now()
   where fr.id = v_request.id
   returning * into v_request;
@@ -1812,5 +2230,347 @@ on public.friend_wellbeing_pings
 for update
 using (auth.uid() = requester_user_id or auth.uid() = target_user_id)
 with check (auth.uid() = requester_user_id or auth.uid() = target_user_id);
+
+commit;
+
+-- ============================================================================
+-- Migration 010: supabase/migrations/010_rgpd_export_and_retention.sql
+-- ============================================================================
+
+-- SafeBack: RGPD (export + suppression renforcée) + rétention automatique
+
+begin;
+
+create or replace function public.delete_my_account()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_user_id uuid;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  -- Données sociales/sécurité
+  delete from public.friend_wellbeing_pings
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  delete from public.friend_map_presence
+  where user_id = v_user_id;
+
+  delete from public.guardianships
+  where owner_user_id = v_user_id
+     or guardian_user_id = v_user_id;
+
+  delete from public.friendships
+  where user_id = v_user_id
+     or friend_user_id = v_user_id;
+
+  delete from public.friend_requests
+  where requester_user_id = v_user_id
+     or target_user_id = v_user_id;
+
+  -- Messagerie/notifications
+  delete from public.messages
+  where sender_user_id = v_user_id;
+
+  delete from public.conversation_participants
+  where user_id = v_user_id;
+
+  -- Nettoie les conversations devenues vides après suppression des participants.
+  delete from public.conversations c
+  where not exists (
+    select 1
+    from public.conversation_participants cp
+    where cp.conversation_id = c.id
+  );
+
+  delete from public.app_notifications
+  where user_id = v_user_id;
+
+  -- Données incidents/monitoring
+  delete from public.incident_reports
+  where user_id = v_user_id;
+
+  delete from public.runtime_error_events
+  where user_id = v_user_id;
+
+  delete from public.ux_metric_events
+  where user_id = v_user_id;
+
+  delete from public.user_device_sessions
+  where user_id = v_user_id;
+
+  -- Données trajets
+  delete from public.locations
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.session_contacts
+  where session_id in (
+    select s.id from public.sessions s where s.user_id = v_user_id
+  );
+
+  delete from public.sessions
+  where user_id = v_user_id;
+
+  -- Données compte
+  delete from public.contacts
+  where user_id = v_user_id;
+
+  delete from public.favorite_addresses
+  where user_id = v_user_id;
+
+  delete from public.profiles
+  where user_id = v_user_id;
+
+  -- Auth Supabase
+  delete from auth.identities where user_id = v_user_id;
+  delete from auth.sessions where user_id = v_user_id;
+  delete from auth.users where id = v_user_id;
+
+  return jsonb_build_object(
+    'deleted', true,
+    'user_id', v_user_id
+  );
+end;
+$$;
+
+grant execute on function public.delete_my_account() to authenticated;
+
+create or replace function public.export_my_data()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_user_id uuid;
+  v_session_ids uuid[];
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Utilisateur non authentifie';
+  end if;
+
+  select coalesce(array_agg(s.id), '{}'::uuid[])
+  into v_session_ids
+  from public.sessions s
+  where s.user_id = v_user_id;
+
+  return jsonb_build_object(
+    'generated_at', now(),
+    'user_id', v_user_id,
+    'profile', (
+      select to_jsonb(p)
+      from public.profiles p
+      where p.user_id = v_user_id
+    ),
+    'favorite_addresses', coalesce((
+      select jsonb_agg(to_jsonb(f) order by f.created_at desc)
+      from public.favorite_addresses f
+      where f.user_id = v_user_id
+    ), '[]'::jsonb),
+    'contacts', coalesce((
+      select jsonb_agg(to_jsonb(c) order by c.created_at desc)
+      from public.contacts c
+      where c.user_id = v_user_id
+    ), '[]'::jsonb),
+    'sessions', coalesce((
+      select jsonb_agg(to_jsonb(s) order by s.created_at desc)
+      from public.sessions s
+      where s.user_id = v_user_id
+    ), '[]'::jsonb),
+    'session_contacts', coalesce((
+      select jsonb_agg(to_jsonb(sc) order by sc.created_at desc)
+      from public.session_contacts sc
+      where sc.session_id = any(v_session_ids)
+    ), '[]'::jsonb),
+    'locations', coalesce((
+      select jsonb_agg(to_jsonb(l) order by l.recorded_at desc)
+      from public.locations l
+      where l.session_id = any(v_session_ids)
+    ), '[]'::jsonb),
+    'incidents', coalesce((
+      select jsonb_agg(to_jsonb(i) order by i.occurred_at desc)
+      from public.incident_reports i
+      where i.user_id = v_user_id
+    ), '[]'::jsonb),
+    'conversations', coalesce((
+      select jsonb_agg(to_jsonb(c) order by c.updated_at desc)
+      from public.conversations c
+      where exists (
+        select 1
+        from public.conversation_participants cp
+        where cp.conversation_id = c.id
+          and cp.user_id = v_user_id
+      )
+    ), '[]'::jsonb),
+    'conversation_participants', coalesce((
+      select jsonb_agg(to_jsonb(cp) order by cp.joined_at desc)
+      from public.conversation_participants cp
+      where cp.conversation_id in (
+        select cp2.conversation_id
+        from public.conversation_participants cp2
+        where cp2.user_id = v_user_id
+      )
+    ), '[]'::jsonb),
+    'messages', coalesce((
+      select jsonb_agg(to_jsonb(m) order by m.created_at desc)
+      from public.messages m
+      where m.conversation_id in (
+        select cp.conversation_id
+        from public.conversation_participants cp
+        where cp.user_id = v_user_id
+      )
+    ), '[]'::jsonb),
+    'app_notifications', coalesce((
+      select jsonb_agg(to_jsonb(n) order by n.created_at desc)
+      from public.app_notifications n
+      where n.user_id = v_user_id
+    ), '[]'::jsonb),
+    'runtime_error_events', coalesce((
+      select jsonb_agg(to_jsonb(e) order by e.created_at desc)
+      from public.runtime_error_events e
+      where e.user_id = v_user_id
+    ), '[]'::jsonb),
+    'ux_metric_events', coalesce((
+      select jsonb_agg(to_jsonb(m) order by m.created_at desc)
+      from public.ux_metric_events m
+      where m.user_id = v_user_id
+    ), '[]'::jsonb),
+    'user_device_sessions', coalesce((
+      select jsonb_agg(to_jsonb(s) order by s.last_seen_at desc)
+      from public.user_device_sessions s
+      where s.user_id = v_user_id
+    ), '[]'::jsonb),
+    'guardianships', coalesce((
+      select jsonb_agg(to_jsonb(g) order by g.created_at desc)
+      from public.guardianships g
+      where g.owner_user_id = v_user_id
+         or g.guardian_user_id = v_user_id
+    ), '[]'::jsonb),
+    'friend_requests', coalesce((
+      select jsonb_agg(to_jsonb(fr) order by fr.created_at desc)
+      from public.friend_requests fr
+      where fr.requester_user_id = v_user_id
+         or fr.target_user_id = v_user_id
+    ), '[]'::jsonb),
+    'friendships', coalesce((
+      select jsonb_agg(to_jsonb(f) order by f.created_at desc)
+      from public.friendships f
+      where f.user_id = v_user_id
+         or f.friend_user_id = v_user_id
+    ), '[]'::jsonb),
+    'friend_map_presence', coalesce((
+      select jsonb_agg(to_jsonb(p) order by p.updated_at desc)
+      from public.friend_map_presence p
+      where p.user_id = v_user_id
+    ), '[]'::jsonb),
+    'friend_wellbeing_pings', coalesce((
+      select jsonb_agg(to_jsonb(p) order by p.created_at desc)
+      from public.friend_wellbeing_pings p
+      where p.requester_user_id = v_user_id
+         or p.target_user_id = v_user_id
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+grant execute on function public.export_my_data() to authenticated;
+
+-- Purge des erreurs runtime anciennes.
+create or replace function public.purge_runtime_error_events_retention(
+  p_older_than interval default interval '90 days'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deleted_count integer := 0;
+begin
+  delete from public.runtime_error_events
+  where created_at < now() - p_older_than;
+
+  get diagnostics v_deleted_count = row_count;
+  return v_deleted_count;
+end;
+$$;
+
+-- Purge des points GPS anciens.
+create or replace function public.purge_locations_retention(
+  p_older_than interval default interval '90 days'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deleted_count integer := 0;
+begin
+  delete from public.locations
+  where recorded_at < now() - p_older_than;
+
+  get diagnostics v_deleted_count = row_count;
+  return v_deleted_count;
+end;
+$$;
+
+grant execute on function public.purge_runtime_error_events_retention(interval) to service_role;
+grant execute on function public.purge_locations_retention(interval) to service_role;
+
+-- Planification automatique via pg_cron si disponible.
+do $$
+declare
+  v_job_id bigint;
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    for v_job_id in
+      execute $sql$
+        select j.jobid
+        from cron.job j
+        where j.jobname in (
+          'safeback_purge_runtime_error_events_90d',
+          'safeback_purge_locations_90d'
+        )
+      $sql$
+    loop
+      execute format('select cron.unschedule(%s)', v_job_id);
+    end loop;
+
+    -- Tous les jours à 03:20 UTC.
+    execute $sql$
+      select cron.schedule(
+        'safeback_purge_runtime_error_events_90d',
+        '20 3 * * *',
+        'select public.purge_runtime_error_events_retention(interval ''90 days'');'
+      )
+    $sql$;
+
+    -- Tous les jours à 03:30 UTC.
+    execute $sql$
+      select cron.schedule(
+        'safeback_purge_locations_90d',
+        '30 3 * * *',
+        'select public.purge_locations_retention(interval ''90 days'');'
+      )
+    $sql$;
+  else
+    raise notice 'pg_cron non installe: planification automatique ignorée.';
+  end if;
+exception
+  when undefined_table or undefined_function then
+    raise notice 'pg_cron indisponible dans cet environnement: planification ignorée.';
+end;
+$$;
 
 commit;

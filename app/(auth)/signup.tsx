@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { signUpAndMaybeCreateProfile } from "../../src/lib/auth/authFlows";
 import { toSignupErrorFr, type SignupErrorUi } from "../../src/lib/auth/authErrorFr";
 import { supabase } from "../../src/lib/core/supabase";
+import { AuthErrorCard } from "../../src/components/AuthErrorCard";
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -78,7 +79,10 @@ export default function SignupScreen() {
         }
       });
 
-      router.replace("/auth");
+      router.replace({
+        pathname: "/auth",
+        params: { signup: "1", email: email.trim() }
+      });
     } catch (error: unknown) {
       setSignupError(toSignupErrorFr(error));
     } finally {
@@ -106,6 +110,7 @@ export default function SignupScreen() {
           >
         <View className="mt-6 flex-row items-center justify-between">
           <TouchableOpacity
+            testID="signup-back-button"
             className="rounded-full border border-[#E7E0D7] bg-white/90 px-4 py-2"
             onPress={() => router.back()}
           >
@@ -128,6 +133,7 @@ export default function SignupScreen() {
         <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Email</Text>
           <TextInput
+            testID="signup-email-input"
             className="mt-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] px-4 py-3 text-base text-slate-900"
             placeholder="prenom@email.com"
             placeholderTextColor="#94a3b8"
@@ -140,6 +146,7 @@ export default function SignupScreen() {
           <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">Mot de passe</Text>
           <View className="mt-3 flex-row items-center rounded-2xl border border-slate-200 bg-[#F8FAFC] px-3">
             <TextInput
+              testID="signup-password-input"
               className="flex-1 py-3 text-base text-slate-900"
               placeholder="********"
               placeholderTextColor="#94a3b8"
@@ -208,40 +215,17 @@ export default function SignupScreen() {
           />
 
           {signupError ? (
-            <View className="mt-4 overflow-hidden rounded-3xl border border-rose-200 bg-rose-50">
-              <View className="absolute left-0 top-0 h-full w-1.5 bg-rose-500" />
-              <View className="px-4 py-4">
-                <View className="flex-row items-center gap-3">
-                  <View className="h-10 w-10 items-center justify-center rounded-2xl border border-rose-200 bg-white">
-                    <Ionicons name="warning-outline" size={20} color="#be123c" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-[10px] font-semibold uppercase tracking-[2px] text-rose-600">
-                      Inscription
-                    </Text>
-                    <Text className="text-base font-extrabold text-rose-900">
-                      {signupError.title}
-                    </Text>
-                  </View>
-                </View>
-                <View className="mt-3 rounded-2xl border border-rose-200 bg-white/90 px-3 py-3">
-                  <Text className="text-sm font-semibold text-rose-900">
-                    {signupError.message}
-                  </Text>
-                  {signupError.hint ? (
-                    <Text className="mt-1 text-xs text-rose-700">{signupError.hint}</Text>
-                  ) : null}
-                </View>
-                {signupError.code ? (
-                  <Text className="mt-2 text-[11px] uppercase tracking-wider text-rose-500">
-                    Code: {signupError.code}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
+            <AuthErrorCard
+              contextLabel="Inscription"
+              title={signupError.title}
+              message={signupError.message}
+              hint={signupError.hint}
+              code={signupError.code}
+            />
           ) : null}
 
           <TouchableOpacity
+            testID="signup-submit-button"
             className={`mt-5 rounded-2xl px-4 py-4 ${
               canSubmit && !saving ? "bg-[#111827]" : "bg-slate-300"
             }`}

@@ -1,15 +1,20 @@
 // Tests unitaires pour valider le comportement de `safetyEscalation` et prévenir les régressions.
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_SAFETY_ESCALATION_CONFIG,
   computeSafetyEscalationSchedule,
   formatSafetyDelay,
   type SafetyEscalationConfig
 } from "./safetyEscalation";
 
 const CONFIG_30_120: SafetyEscalationConfig = {
+  ...DEFAULT_SAFETY_ESCALATION_CONFIG,
   enabled: true,
   reminderDelayMinutes: 30,
-  closeContactsDelayMinutes: 120
+  closeContactsDelayMinutes: 120,
+  stageOneDelayMinutes: 30,
+  stageTwoDelayMinutes: 120,
+  stageThreeDelayMinutes: 180
 };
 
 describe("safety escalation schedule", () => {
@@ -27,6 +32,7 @@ describe("safety escalation schedule", () => {
     // close contacts = base + 120 min = now + 140 min
     expect(result.reminderDelaySeconds).toBe(50 * 60);
     expect(result.closeContactsDelaySeconds).toBe(140 * 60);
+    expect(result.stageThreeDelaySeconds).toBe(200 * 60);
   });
 
   it("prioritizes expected arrival when provided and valid", () => {
@@ -79,9 +85,13 @@ describe("safety escalation schedule", () => {
 
     const result = computeSafetyEscalationSchedule({
       config: {
+        ...DEFAULT_SAFETY_ESCALATION_CONFIG,
         enabled: true,
         reminderDelayMinutes: 0,
-        closeContactsDelayMinutes: 0
+        closeContactsDelayMinutes: 0,
+        stageOneDelayMinutes: 0,
+        stageTwoDelayMinutes: 0,
+        stageThreeDelayMinutes: 0
       },
       now
     });

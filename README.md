@@ -161,6 +161,8 @@ supabase/
   all_in_one.sql         script unique pret a executer
   migrations/            scripts SQL versionnes
   legacy/                ancien schema conserve pour reference
+docs/
+  data-architecture.md   schema, relations, flux et RLS
 ```
 
 ## Tests
@@ -176,6 +178,38 @@ Mode watch:
 ```bash
 npm run test:watch
 ```
+
+Executer les scenarios E2E (niveau service: inscription, trajet, SOS, amis, map live, onboarding):
+
+```bash
+npm run test:e2e
+```
+
+Executer les E2E device (Maestro, iOS/Android):
+
+```bash
+MAESTRO_TEST_EMAIL="test1@example.com" \
+MAESTRO_TEST_PASSWORD="StrongPass123!" \
+npm run test:e2e:device
+```
+
+Details des flows, variables et prerequisites:
+- `maestro/README.md`
+
+Tests resiliences offline/reseau faible + reprise apres crash:
+- `src/lib/trips/offlineRecovery.test.ts`
+- `src/lib/trips/offlineTripQueue.test.ts`
+
+Monitoring runtime + metriques UX:
+- capture erreurs JS globales + promesses non gerees
+- file locale persistante puis flush Supabase automatique
+- tables:
+  - `public.runtime_error_events`
+  - `public.ux_metric_events`
+- metriques onboarding:
+  - temps de configuration complet
+  - abandon d etape
+  - completion d etape
 
 ## Guide des fonctionnalites
 

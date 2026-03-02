@@ -14,7 +14,9 @@ export type PrivacyEvent = {
     | "battery_alert_shared"
     | "auto_checkin_arrival"
     | "privacy_reset"
-    | "permission_snapshot";
+    | "permission_snapshot"
+    | "consent_updated"
+    | "device_sessions_revoked";
   message: string;
   createdAtIso: string;
   data?: Record<string, unknown> | null;

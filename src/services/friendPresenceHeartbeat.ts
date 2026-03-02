@@ -1,7 +1,7 @@
 // Heartbeat global de presence: maintient un etat reseau recent pour rassurer les proches.
 import { AppState } from "react-native";
 import { getProfile } from "../lib/core/db";
-import { upsertMyFriendMapPresence } from "../lib/social/friendMap";
+import { clearMyFriendMapPresence, upsertMyFriendMapPresence } from "../lib/social/friendMap";
 
 export async function startFriendPresenceHeartbeat(options?: {
   onInfo?: (message: string) => void;
@@ -18,6 +18,11 @@ export async function startFriendPresenceHeartbeat(options?: {
         import("expo-network"),
         getProfile()
       ]);
+      if (!profile?.consent_presence) {
+        await clearMyFriendMapPresence();
+        options?.onInfo?.("presence-heartbeat: skipped (consent_presence=false)");
+        return;
+      }
       const network = await getNetworkStateAsync();
       await upsertMyFriendMapPresence({
         networkConnected: Boolean(network.isConnected),

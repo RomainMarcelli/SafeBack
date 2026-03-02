@@ -22,15 +22,34 @@ export default function LegalScreen() {
         </View>
 
         <Text className="mt-2 text-sm text-slate-600">
-          Ce contenu est statique et peut etre adapte selon tes besoins juridiques.
+          Accède aux documents légaux détaillés et à jour depuis cette page.
         </Text>
+
+        <View className="mt-4 flex-row gap-2">
+          <TouchableOpacity
+            className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+            onPress={() => router.push("/legal/privacy")}
+          >
+            <Text className="text-center text-sm font-semibold text-white">
+              Politique de confidentialité
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+            onPress={() => router.push("/legal/terms")}
+          >
+            <Text className="text-center text-sm font-semibold text-slate-700">
+              Conditions d utilisation
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         <View className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-sm font-semibold text-slate-900">
             Conditions generales d utilisation (CGU)
           </Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
-            En utilisant SafeBack, tu acceptes d utiliser l application de maniere legale et
+            En utilisant SafeBack, tu acceptes d utiliser l'application de maniere legale et
             responsable. L utilisateur reste responsable des informations saisies et partagees avec
             ses contacts.
           </Text>
@@ -42,31 +61,30 @@ export default function LegalScreen() {
 
         <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-sm font-semibold text-slate-900">
-            Politique de confidentialite
+            Politique de confidentialité
           </Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
-            SafeBack traite des donnees necessaires au fonctionnement du service: compte utilisateur,
-            favoris, trajets et donnees de localisation quand activees par l utilisateur.
+            SafeBack traite des données necessaires au fonctionnement du service: compte utilisateur,
+            favoris, trajets et données de localisation quand activées par l utilisateur.
           </Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
-            Les donnees sont stockees dans une base distante configuree par le projet. Tu peux
-            demander la suppression de tes donnees en supprimant ton compte et son contenu associe.
+            Les données sont stockees dans une base distante configuree par le projet. Tu peux
+            demander la suppression de tes données en supprimant ton compte et son contenu associe.
           </Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
             Les permissions (localisation, notifications, contacts) sont optionnelles et controles
-            par les reglages de ton appareil.
+            par les réglages de ton'appareil.
           </Text>
         </View>
 
         <View className="mt-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <Text className="text-sm font-semibold text-slate-900">Responsabilite</Text>
           <Text className="mt-2 text-sm leading-5 text-slate-600">
-            L application est fournie telle quelle. Elle ne remplace pas un service d urgence ni un
-            dispositif de securite officiel.
+            L application'est fournie telle quelle. Elle ne remplace pas un service d urgence ni un
+            dispositif de sécurité officiel.
           </Text>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
-

@@ -1,0 +1,38 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Sous-flow: accepte les prompts de localisation (iOS/Android, FR/EN) si présents.
+- runFlow:
+    when:
+      visible: "Autoriser lorsque l’app est active"
+    commands:
+      - tapOn: "Autoriser lorsque l’app est active"
+
+- runFlow:
+    when:
+      visible: "Autoriser une fois"
+    commands:
+      - tapOn: "Autoriser une fois"
+
+- runFlow:
+    when:
+      visible: "Allow While Using App"
+    commands:
+      - tapOn: "Allow While Using App"
+
+- runFlow:
+    when:
+      visible: "Allow Once"
+    commands:
+      - tapOn: "Allow Once"
+
+- runFlow:
+    when:
+      visible: "While using the app"
+    commands:
+      - tapOn: "While using the app"
+
+- runFlow:
+    when:
+      visible: "Uniquement lorsque l'application est en cours d'utilisation"
+    commands:
+      - tapOn: "Uniquement lorsque l'application est en cours d'utilisation"

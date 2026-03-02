@@ -13,6 +13,7 @@ import {
   setPredefinedMessageConfig
 } from "../../src/lib/contacts/predefinedMessage";
 import { supabase } from "../../src/lib/core/supabase";
+import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 export default function PredefinedMessageScreen() {
   const router = useRouter();
@@ -53,9 +54,7 @@ export default function PredefinedMessageScreen() {
     })();
   }, []);
 
-  if (!checking && !userId) {
-    return <Redirect href="/auth" />;
-  }
+  const shouldRedirectToAuth = !checking && !userId;
 
   const preview = useMemo(
     () => resolvePredefinedMessage({ useCustomMessage, message }),
@@ -93,6 +92,10 @@ export default function PredefinedMessageScreen() {
     }
   };
 
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-[#F7F2EA]">
       <StatusBar style="dark" />
@@ -122,7 +125,7 @@ export default function PredefinedMessageScreen() {
           {"Message pr\u00e9d\u00e9fini"}
         </Text>
         <Text className="mt-2 text-base text-[#475569]">
-          {"Configure ton message rapide \u00e0 envoyer \u00e0 tes proches quand tu es bien rentr\u00e9."}
+          {"Configure ton message rapide \u00e0 envoyér \u00e0 tes proches quand tu es bien rentr\u00e9."}
         </Text>
 
         <View className="mt-6 rounded-3xl bg-[#111827] px-5 py-5 shadow-sm">
@@ -197,8 +200,8 @@ export default function PredefinedMessageScreen() {
             <Text className="mt-2 text-sm font-semibold text-slate-800">{preview}</Text>
           </View>
 
-          {errorMessage ? <Text className="mt-3 text-sm text-red-600">{errorMessage}</Text> : null}
-          {successMessage ? <Text className="mt-3 text-sm text-emerald-600">{successMessage}</Text> : null}
+          {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} compact /> : null}
+          {successMessage ? <FeedbackMessage kind="success" message={successMessage} compact /> : null}
 
           <TouchableOpacity
             className={`mt-5 rounded-2xl px-4 py-3 ${

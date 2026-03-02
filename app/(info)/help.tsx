@@ -23,7 +23,7 @@ const FAQS: FaqItem[] = [
     a: "Le mode Transit et certaines vues avancées demandent parfois Premium et/ou une clé Google Maps configurée."
   },
   {
-    q: "Je n arrive pas à me connecter, que vérifier ?",
+    q: "Je n'arrive pas à me connecter, que vérifier ?",
     a: "Vérifie l email, le mot de passe et les variables EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY."
   },
   {
@@ -40,7 +40,7 @@ const FAQS: FaqItem[] = [
   },
   {
     q: "Les notifications ne partent pas ?",
-    a: "Sur Expo Go, certaines notifications sont limitées. Vérifie aussi les permissions système sur ton appareil."
+    a: "Sur Expo Go, certaines notifications sont limitées. Vérifie aussi les permissions système sur ton'appareil."
   }
 ];
 
