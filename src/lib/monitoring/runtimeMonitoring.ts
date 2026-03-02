@@ -208,6 +208,12 @@ export function installGlobalRuntimeErrorHandlers(): () => void {
   ) {
     previousGlobalHandler = globalObject.ErrorUtils.getGlobalHandler();
     globalObject.ErrorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+      // Log explicite local pour accélérer le diagnostic des crashes navigation/context en dev.
+      console.error("[runtime-monitoring] global-js-error", {
+        fatal: Boolean(isFatal),
+        message: String((error as { message?: string })?.message ?? error ?? ""),
+        stack: String((error as { stack?: string })?.stack ?? "")
+      });
       captureRuntimeError({
         error,
         fatal: Boolean(isFatal),

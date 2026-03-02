@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { Link, Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Link, Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   Modal,
   PanResponder,
@@ -477,12 +477,11 @@ export default function HomeScreen() {
     }
   }, [totalFullTutorialSteps]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!userId) return;
-      refreshOnboarding(userId);
-    }, [userId, refreshOnboarding])
-  );
+  useEffect(() => {
+    if (!userId) return;
+    // Rafraîchit le checklist onboarding à l'entrée sur la Home et après changements de paramètres.
+    void refreshOnboarding(userId);
+  }, [userId, refreshOnboarding, params.onboarding, params.onboardingToken]);
 
   useEffect(() => {
     const shouldOpenGuide =

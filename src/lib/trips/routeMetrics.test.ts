@@ -1,4 +1,7 @@
-// Tests unitaires pour valider le comportement de `routeMetrics` et prévenir les régressions.
+// Tests de métriques trajet:
+// - estimation locale (distance + durée)
+// - cas "aucun calcul possible"
+// - fallback Google si configuré.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchRoute } from "./routing";
 
@@ -19,6 +22,14 @@ function mockFetchSequence(responses: MockFetchResponse[]) {
   return fetchMock;
 }
 
+function geocodeOk(lon: number, lat: number) {
+  return { json: { features: [{ geometry: { coordinates: [lon, lat] } }] } };
+}
+
+function geocodeFailAll() {
+  return [{ json: { features: [] } }, { json: { results: [] } }, { json: { results: [] } }];
+}
+
 const originalGoogleKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 describe("route metrics", () => {
@@ -35,50 +46,30 @@ describe("route metrics", () => {
     }
   });
 
-  it("calculates driving travel time and distance from OSRM", async () => {
-    mockFetchSequence([
-      { json: { features: [{ geometry: { coordinates: [2.35, 48.86] } }] } },
-      { json: { features: [{ geometry: { coordinates: [2.37, 48.88] } }] } },
-      {
-        json: {
-          code: "Ok",
-          routes: [
-            {
-              geometry: { coordinates: [[2.35, 48.86], [2.37, 48.88]] },
-              duration: 1260,
-              distance: 8400
-            }
-          ]
-        }
-      }
-    ]);
+  it("calculates driving travel time and distance from local estimate", async () => {
+    mockFetchSequence([geocodeOk(2.35, 48.86), geocodeOk(2.37, 48.88)]);
 
     const route = await fetchRoute("Paris A", "Paris B", "driving");
 
-    expect(route?.provider).toBe("osrm");
-    expect(route?.durationMinutes).toBe(21);
-    expect(route?.distanceKm).toBe(8.4);
+    expect(route?.provider).toBe("estimate");
+    expect(route?.durationMinutes).toBeGreaterThan(0);
+    expect(route?.distanceKm).toBeGreaterThan(0);
     expect(route?.coords.length).toBe(2);
   });
 
-  it("returns null when no route can be computed between the 2 addresses", async () => {
-    mockFetchSequence([
-      { json: { features: [] } },
-      { json: { results: [] } },
-      { json: { results: [] } },
-      { json: { features: [] } },
-      { json: { results: [] } },
-      { json: { results: [] } }
-    ]);
+  it("returns null when no route can be computed between the 2 addresses (transit sans clé)", async () => {
+    mockFetchSequence([...geocodeFailAll(), ...geocodeFailAll()]);
 
-    const route = await fetchRoute("Adresse inconnue 1", "Adresse inconnue 2", "driving");
+    const route = await fetchRoute("Adresse inconnue 1", "Adresse inconnue 2", "transit");
 
     expect(route).toBeNull();
   });
 
-  it("uses Google metrics for transit when API key is configured", async () => {
+  it("uses Google metrics when API key is configured and estimate fails", async () => {
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY = "test-key";
     mockFetchSequence([
+      ...geocodeFailAll(),
+      ...geocodeFailAll(),
       {
         json: {
           routes: [

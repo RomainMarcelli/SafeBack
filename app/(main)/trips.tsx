@@ -1,7 +1,7 @@
 // Écran historique des trajets avec timeline sécurité et score de fiabilité.
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -42,8 +42,10 @@ export default function TripsScreen() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [timeline, setTimeline] = useState<SecurityTimelineEvent[]>([]);
   const [reliability, setReliability] = useState<PersonalSafetyScore | null>(null);
+  const [showReliability, setShowReliability] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [query, setQuery] = useState("");
   const [deletingAll, setDeletingAll] = useState(false);
   const [activePanel, setActivePanel] = useState<"timeline" | "sessions">("timeline");
@@ -54,12 +56,6 @@ export default function TripsScreen() {
       setChecking(false);
     });
   }, []);
-
-  useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
 
   useEffect(() => {
     if (!userId) return;
@@ -82,14 +78,14 @@ export default function TripsScreen() {
     })();
   }, [userId]);
 
-  const shouldHideScreen = !checking && !userId;
+  const shouldRedirectToAuth = !checking && !userId;
 
   const filteredSessions = useMemo(() => {
     return filterTripSessionsByQuery(sessions, query);
   }, [sessions, query]);
 
-  if (shouldHideScreen) {
-    return null;
+  if (shouldRedirectToAuth) {
+    return <Redirect href="/auth" />;
   }
 
   return (
@@ -152,7 +148,17 @@ export default function TripsScreen() {
           </View>
         </View>
 
-        {reliability ? (
+        <TouchableOpacity
+          className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+          onPress={() => setShowReliability((prev) => !prev)}
+          disabled={!reliability}
+        >
+          <Text className={`text-center text-sm font-semibold ${reliability ? "text-slate-700" : "text-slate-400"}`}>
+            {showReliability ? "Masquer le score de fiabilité" : "Afficher le score de fiabilité"}
+          </Text>
+        </TouchableOpacity>
+
+        {showReliability && reliability ? (
           <View className="mt-6 rounded-3xl bg-[#111827] px-5 py-5 shadow-sm">
             <Text className="text-xs uppercase tracking-widest text-slate-300">Score fiabilite</Text>
             <Text className="mt-2 text-4xl font-extrabold text-white">{reliability.score}/100</Text>
@@ -288,9 +294,16 @@ export default function TripsScreen() {
                 if (!confirmed) return;
                 try {
                   setDeletingAll(true);
-                  await deleteAllSessions();
-                  setSessions([]);
+                  setErrorMessage("");
+                  const deletedCount = await deleteAllSessions();
+                  const refreshedSessions = await listSessions();
+                  setSessions(refreshedSessions as SessionItem[]);
                   setQuery("");
+                  setSuccessMessage(
+                    deletedCount > 0
+                      ? `${deletedCount} trajet(s) supprimé(s).`
+                      : "Aucun trajet à supprimer."
+                  );
                 } catch (error: any) {
                   setErrorMessage(error?.message ?? "Erreur suppression.");
                 } finally {
@@ -369,8 +382,10 @@ export default function TripsScreen() {
                     });
                     if (!confirmed) return;
                     try {
+                      setErrorMessage("");
                       await deleteSession(session.id);
                       setSessions((prev) => prev.filter((item) => item.id !== session.id));
+                      setSuccessMessage("Trajet supprimé.");
                     } catch (error: any) {
                       setErrorMessage(error?.message ?? "Erreur suppression.");
                     }
@@ -385,6 +400,7 @@ export default function TripsScreen() {
           </View>
         ) : null}
 
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
         {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
       </ScrollView>
     </SafeAreaView>

@@ -1,6 +1,6 @@
 import "../global.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Stack, usePathname } from "expo-router";
+import { Stack } from "expo-router";
 import Constants from "expo-constants";
 import * as QuickActions from "expo-quick-actions";
 import { type RouterAction } from "expo-quick-actions/router";
@@ -12,7 +12,6 @@ import { startFriendPresenceHeartbeat } from "../src/services/friendPresenceHear
 import { startVolumeSosShortcut } from "../src/services/volumeSosShortcut";
 import { syncPendingTripLaunches } from "../src/lib/trips/offlineTripQueue";
 import { markNotificationRead, respondFriendWellbeingPing } from "../src/lib/social/messagingDb";
-import { markRouteVisited } from "../src/lib/home/discoveryProgress";
 import { supabase } from "../src/lib/core/supabase";
 import { isCurrentDeviceRevoked, upsertCurrentDeviceSession } from "../src/lib/security/deviceSessions";
 import { AppToastProvider } from "../src/components/AppToastProvider";
@@ -29,23 +28,7 @@ if (Constants.appOwnership === "expo") {
   enableFreeze(false);
 }
 
-function useSafePathname() {
-  const warnedRef = useRef(false);
-  try {
-    return usePathname();
-  } catch (error) {
-    if (!warnedRef.current) {
-      warnedRef.current = true;
-      console.error("[root-layout/nav] usePathname unavailable", {
-        message: String((error as { message?: string })?.message ?? error)
-      });
-    }
-    return "/";
-  }
-}
-
 export default function RootLayout() {
-  const pathname = useSafePathname();
   const [pingPromptQueue, setPingPromptQueue] = useState<
     Array<{
       notificationId: string;
@@ -60,24 +43,6 @@ export default function RootLayout() {
     () => (pingPromptQueue.length > 0 ? pingPromptQueue[0] : null),
     [pingPromptQueue]
   );
-
-  useEffect(() => {
-    if (!pathname) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const userId = data.session?.user.id;
-        if (!userId || cancelled) return;
-        await markRouteVisited(userId, pathname);
-      } catch {
-        // no-op: le tracking de découverte ne doit jamais bloquer l'app.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname]);
 
   useEffect(() => {
     const uninstall = installGlobalRuntimeErrorHandlers();

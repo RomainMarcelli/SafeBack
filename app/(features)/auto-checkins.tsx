@@ -83,12 +83,6 @@ export default function AutoCheckinsScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
   const refresh = async () => {
     const [config, favoriteRows, friendRows] = await Promise.all([
       getAutoCheckinConfig(),

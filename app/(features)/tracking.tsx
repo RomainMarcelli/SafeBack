@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { Linking, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -153,9 +153,17 @@ export default function TrackingScreen() {
     const destination = encodeURIComponent(session.to_address);
     const travelmode =
       routeMode === "walking" ? "walking" : routeMode === "driving" ? "driving" : "transit";
-    await Linking.openURL(
-      `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=${travelmode}`
-    );
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=${travelmode}`;
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        setBgError("Impossible d'ouvrir la navigation sur cet appareil.");
+        return;
+      }
+      await Linking.openURL(url);
+    } catch (error: any) {
+      setBgError(error?.message ?? "Ouverture de Google Maps impossible.");
+    }
   };
 
   useEffect(() => {
@@ -164,12 +172,6 @@ export default function TrackingScreen() {
       setChecking(false);
     });
   }, []);
-
-  useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
 
   useEffect(() => {
     (async () => {
@@ -651,7 +653,7 @@ export default function TrackingScreen() {
     : undefined;
 
   if (!checking && !userId) {
-    return null;
+    return <Redirect href="/auth" />;
   }
 
   return (
@@ -757,7 +759,17 @@ export default function TrackingScreen() {
                     Platform.OS === "ios"
                       ? `http://maps.apple.com/?saddr=${encodedFrom}&daddr=${encodedTo}`
                       : `https://www.google.com/maps/dir/?api=1&origin=${encodedFrom}&destination=${encodedTo}`;
-                  Linking.openURL(url);
+                  Linking.canOpenURL(url)
+                    .then((canOpen) => {
+                      if (!canOpen) {
+                        setBgError("Impossible d'ouvrir la navigation sur cet appareil.");
+                        return;
+                      }
+                      return Linking.openURL(url);
+                    })
+                    .catch((error: any) => {
+                      setBgError(error?.message ?? "Ouverture de la navigation impossible.");
+                    });
                 }}
               >
                 {routeResult?.coords?.length ? (

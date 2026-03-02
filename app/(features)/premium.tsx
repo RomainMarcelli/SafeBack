@@ -1,7 +1,7 @@
 // Écran des options premium et de l'état d'abonnement utilisateur.
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getPremium, setPremium } from "../../src/lib/subscription/premiumStorage";
@@ -22,14 +22,8 @@ export default function PremiumScreen() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
   if (!checking && !userId) {
-    return null;
+    return <Redirect href="/auth" />;
   }
 
   return (

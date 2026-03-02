@@ -215,9 +215,21 @@ export async function listSessions(): Promise<Session[]> {
   return data as Session[];
 }
 
-export async function deleteAllSessions() {
-  const { error } = await supabase.from("sessions").delete().neq("id", "");
+export async function deleteAllSessions(): Promise<number> {
+  const session = await supabase.auth.getSession();
+  const userId = session.data.session?.user.id;
+  if (!userId) {
+    throw new Error("Utilisateur non'authentifie.");
+  }
+
+  // Suppression explicite par user_id pour éviter les filtres fragiles sur UUID (ex: neq "").
+  const { data, error } = await supabase
+    .from("sessions")
+    .delete()
+    .eq("user_id", userId)
+    .select("id");
   if (error) throw error;
+  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function deleteSession(id: string) {

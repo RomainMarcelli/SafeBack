@@ -14,11 +14,12 @@ import {
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import { StatusBar } from "expo-status-bar";
-import { router, useLocalSearchParams } from "expo-router";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
 import Constants from "expo-constants";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createContact,
   createSessionWithContacts,
@@ -54,10 +55,28 @@ import { confirmAction } from "../../src/lib/privacy/confirmAction";
 import { logPrivacyEvent } from "../../src/lib/privacy/privacyCenter";
 import { supabase } from "../../src/lib/core/supabase";
 import { fetchRoute, type RouteMode, type RouteResult } from "../../src/lib/trips/routing";
-import { sendTripStartedSignalToGuardians } from "../../src/lib/social/messagingDb";
+import {
+  sendTripStartedSignalToGuardians,
+  createGuardianAssignment,
+  listGuardianAssignments,
+  sendWatchTimerExpiredSignalToGuardians
+} from "../../src/lib/social/messagingDb";
+import { listFriends, type FriendWithProfile } from "../../src/lib/social/friendsDb";
 import { FeedbackMessage } from "../../src/components/FeedbackMessage";
 
 const GEO_API = "https://data.geopf.fr/geocodage/completion/";
+// Garde-fou temporaire: suspension de l'estimation de trajet pour isoler le bug de navigation.
+// Mettre EXPO_PUBLIC_ENABLE_ROUTE_ESTIMATE=0 pour la suspendre temporairement.
+const ROUTE_ESTIMATION_ENABLED = process.env.EXPO_PUBLIC_ENABLE_ROUTE_ESTIMATE !== "0";
+const LAST_ROUTE_MODE_STORAGE_KEY = "safeback:setup:last-route-mode:v1";
+const OPEN_TRIP_DESTINATION_LABEL = "Destination ouverte";
+
+type QuickActionKey =
+  | "depart_now"
+  | "go_home"
+  | "simple_timer"
+  | "favorite_destination"
+  | null;
 
 type AddressSuggestion = {
   id: string;
@@ -89,6 +108,25 @@ type SimulatedMessage = {
   email?: string | null;
   body: string;
   sentAt: string;
+};
+
+type LaunchSessionOptions = {
+  fromAddressOverride?: string;
+  toAddressOverride?: string;
+  selectedContactIdsOverride?: string[];
+  routeModeOverride?: RouteMode;
+  expectedHourOverride?: string | null;
+  expectedMinuteOverride?: string | null;
+  routeResultOverride?: RouteResult | null;
+  autoOpenTracking?: boolean;
+  requireDestination?: boolean;
+};
+
+type QuickTimerState = {
+  id: string;
+  durationMinutes: number;
+  endsAtMs: number;
+  alertSent: boolean;
 };
 
 function normalizeSuggestions(data: any): AddressSuggestion[] {
@@ -217,6 +255,14 @@ function isLikelyNetworkError(error: unknown): boolean {
   );
 }
 
+function normalizeTextForMatch(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function AddressInput(props: {
   label: string;
   value: string;
@@ -298,27 +344,11 @@ function AddressInput(props: {
   );
 }
 
-function useSafeLocalSearchParams() {
-  const warnedRef = useRef(false);
-  try {
-    return useLocalSearchParams<{ from?: string; to?: string; mode?: string }>();
-  } catch (error) {
-    if (!warnedRef.current) {
-      warnedRef.current = true;
-      console.error("[setup/nav] useLocalSearchParams unavailable", {
-        message: String((error as { message?: string })?.message ?? error)
-      });
-    }
-    return {} as { from?: string; to?: string; mode?: string };
-  }
-}
-
 export default function SetupScreen() {
-  const params = useSafeLocalSearchParams();
+  const router = useRouter();
   const revealValues = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
   ).current;
-  const prefillDone = useRef(false);
   // Compteur de debug pour tracer les calculs d'itinéraire asynchrones et ignorer les résultats obsolètes.
   const routeRequestIdRef = useRef(0);
   const [fromAddress, setFromAddress] = useState("");
@@ -332,6 +362,17 @@ export default function SetupScreen() {
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [showTransitNotice, setShowTransitNotice] = useState(false);
+  const [advancedModeOpen, setAdvancedModeOpen] = useState(false);
+  const [quickActionBusy, setQuickActionBusy] = useState<QuickActionKey>(null);
+  const [showQuickDepartModal, setShowQuickDepartModal] = useState(false);
+  const [quickDepartDestination, setQuickDepartDestination] = useState("");
+  const [showFavoriteLaunchModal, setShowFavoriteLaunchModal] = useState(false);
+  const [showQuickTimerModal, setShowQuickTimerModal] = useState(false);
+  const [customTimerMinutes, setCustomTimerMinutes] = useState("90");
+  const [quickTimerState, setQuickTimerState] = useState<QuickTimerState | null>(null);
+  const [showGuardianRequiredModal, setShowGuardianRequiredModal] = useState(false);
+  const [guardianModalLoading, setGuardianModalLoading] = useState(false);
+  const [friendCandidates, setFriendCandidates] = useState<FriendWithProfile[]>([]);
 
   const [manualName, setManualName] = useState("");
   const [manualPhone, setManualPhone] = useState("");
@@ -358,6 +399,7 @@ export default function SetupScreen() {
 
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [loadingFavorites, setLoadingFavorites] = useState(false);
   const [phoneContacts, setPhoneContacts] = useState<Contacts.Contact[]>([]);
   const [showPhoneContacts, setShowPhoneContacts] = useState(false);
@@ -371,6 +413,43 @@ export default function SetupScreen() {
   const hourOptions = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0"));
   const minuteOptions = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"];
   const canLaunch = Boolean(fromAddress.trim() && toAddress.trim());
+  const homeFavorite = useMemo(() => {
+    return favoriteAddresses.find((item) => {
+      const label = normalizeTextForMatch(String(item.label ?? ""));
+      const address = normalizeTextForMatch(String(item.address ?? ""));
+      return (
+        label.includes("home") ||
+        label.includes("maison") ||
+        label.includes("domicile") ||
+        label.includes("chez moi") ||
+        address.includes("home")
+      );
+    });
+  }, [favoriteAddresses]);
+
+  const getDefaultContactIdsForGroup = (group: ContactGroupKey): string[] =>
+    favoriteContacts
+      .filter((contact) => resolveContactGroup(contact.contact_group) === group)
+      .map((contact) => contact.id);
+
+  const getPrimaryContactIds = () => {
+    const priorities: ContactGroupKey[] = ["family", "friends", "colleagues"];
+    for (const group of priorities) {
+      const ids = getDefaultContactIdsForGroup(group);
+      if (ids.length > 0) return ids;
+    }
+    return [];
+  };
+
+  const getFriendLabel = (friend: FriendWithProfile): string => {
+    const firstName = String(friend.profile?.first_name ?? "").trim();
+    const lastName = String(friend.profile?.last_name ?? "").trim();
+    const username = String(friend.profile?.username ?? "").trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (fullName.length > 0) return fullName;
+    if (username.length > 0) return username;
+    return `Ami ${friend.friend_user_id.slice(0, 8)}`;
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -387,7 +466,13 @@ export default function SetupScreen() {
         hasUser: Boolean(session?.user?.id),
         userId: session?.user?.id ?? null
       });
-      setUserId(session?.user.id ?? null);
+      if (_event === "SIGNED_OUT") {
+        setUserId(null);
+        return;
+      }
+      if (session?.user?.id) {
+        setUserId(session.user.id);
+      }
     });
     return () => {
       listener.subscription.unsubscribe();
@@ -395,46 +480,16 @@ export default function SetupScreen() {
   }, []);
 
   useEffect(() => {
-    if (!checking && !userId) {
-      try {
-        console.log("[setup/nav] No active user, redirect to /auth");
-        router.replace("/auth");
-      } catch (error) {
-        console.error("[setup/nav] Redirect failed", error);
-      }
-    }
-  }, [checking, userId]);
-
-  useEffect(() => {
-    if (prefillDone.current) return;
-    const fromParam = Array.isArray(params.from) ? params.from[0] : params.from;
-    const toParam = Array.isArray(params.to) ? params.to[0] : params.to;
-    const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
-    if (!fromParam && !toParam && !modeParam) return;
-
-    if (fromParam) {
-      setFromAddress(fromParam);
-      setDepartureMode("custom");
-    }
-    if (toParam) {
-      setToAddress(toParam);
-      setDestinationMode("custom");
-    }
-    if (modeParam) {
-      const normalized = modeParam.toLowerCase();
-      if (normalized === "walking" || normalized === "driving") {
-        setRouteMode(normalized as RouteMode);
-      }
-      if (normalized === "transit") {
-        if (hasGoogleKey) {
-          setRouteMode("transit");
-        } else {
-          setShowTransitNotice(true);
+    AsyncStorage.getItem(LAST_ROUTE_MODE_STORAGE_KEY)
+      .then((stored) => {
+        if (stored === "walking" || stored === "driving" || stored === "transit") {
+          setRouteMode(stored);
         }
-      }
-    }
-    prefillDone.current = true;
-  }, [params.from, params.to, params.mode, hasGoogleKey]);
+      })
+      .catch(() => {
+        // no-op
+      });
+  }, []);
 
   useEffect(() => {
     if (!userId) return;
@@ -489,6 +544,11 @@ export default function SetupScreen() {
   }, [userId]);
 
   useEffect(() => {
+    if (!ROUTE_ESTIMATION_ENABLED) {
+      setRouteLoading(false);
+      setRouteResult(null);
+      return;
+    }
     if (!fromAddress.trim() || !toAddress.trim()) {
       setRouteResult(null);
       return;
@@ -591,13 +651,57 @@ export default function SetupScreen() {
   });
 
   if (!checking && !userId) {
-    return null;
+    return (
+      <SafeAreaView className="flex-1 items-center justify-center bg-[#F7F2EA] px-6">
+        <Text className="text-center text-xl font-bold text-slate-900">Session requise</Text>
+        <Text className="mt-2 text-center text-sm text-slate-600">
+          Connecte-toi pour créer un trajet.
+        </Text>
+        <TouchableOpacity
+          className="mt-4 rounded-2xl bg-[#111827] px-5 py-3"
+          onPress={() => router.push("/auth")}
+        >
+          <Text className="text-sm font-semibold text-white">Aller à la connexion</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
   }
 
   const toggleContact = (id: string) => {
     setSelectedContacts((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
+  };
+
+  const setRouteModeAndPersist = (nextMode: RouteMode) => {
+    setRouteMode(nextMode);
+    AsyncStorage.setItem(LAST_ROUTE_MODE_STORAGE_KEY, nextMode).catch(() => {
+      // no-op
+    });
+  };
+
+  const ensureGuardiansOrContactsBeforeLaunch = async (resolvedContactIds: string[]) => {
+    if (resolvedContactIds.length > 0) return true;
+    if (!userId) return false;
+    const guardianships = await listGuardianAssignments();
+    const hasActiveGuardian = guardianships.some(
+      (row) => row.owner_user_id === userId && row.status === "active"
+    );
+    if (hasActiveGuardian) return true;
+
+    setGuardianModalLoading(true);
+    setShowGuardianRequiredModal(true);
+    try {
+      const [friends, contacts] = await Promise.all([listFriends(), listContacts()]);
+      setFriendCandidates(friends);
+      setFavoriteContacts(contacts as ContactItem[]);
+    } finally {
+      setGuardianModalLoading(false);
+    }
+    setErrorMessage(
+      "Avant de lancer un trajet, choisis au moins un proche (contact) ou définis un garant."
+    );
+    return false;
   };
 
   const swapAddresses = () => {
@@ -740,9 +844,52 @@ export default function SetupScreen() {
     }
   };
 
-  const launchSession = () => {
-    if (!fromAddress.trim() || !toAddress.trim()) return;
+  const resolveCurrentAddressForQuickAction = async () => {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status !== "granted") {
+      throw new Error("Autorise la localisation pour lancer une action rapide.");
+    }
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced
+    });
+    const geo = await Location.reverseGeocodeAsync({
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude
+    });
+    const formatted = formatAddressFromGeo(geo[0] ?? null).trim();
+    if (formatted.length > 0) return formatted;
+    return `Position actuelle (${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(
+      5
+    )})`;
+  };
+
+  const launchSession = (options?: LaunchSessionOptions) => {
+    const normalizedFrom = (options?.fromAddressOverride ?? fromAddress).trim();
+    const rawTo = (options?.toAddressOverride ?? toAddress).trim();
+    const requireDestination = options?.requireDestination ?? true;
+    if (!normalizedFrom) return;
+    if (requireDestination && !rawTo) return;
+
+    const normalizedTo = rawTo || OPEN_TRIP_DESTINATION_LABEL;
+    const destinationForMessage = rawTo || "une destination ouverte";
+    const resolvedRouteMode = options?.routeModeOverride ?? routeMode;
+    const expectedHourValue = options?.expectedHourOverride ?? expectedHour;
+    const expectedMinuteValue = options?.expectedMinuteOverride ?? expectedMinute;
+    const resolvedRouteResult = options?.routeResultOverride ?? routeResult;
+    const resolvedContactIds = options?.selectedContactIdsOverride ?? selectedContacts;
+    const resolvedSelectedContactItems = favoriteContacts.filter((contact) =>
+      resolvedContactIds.includes(contact.id)
+    );
+    const autoOpenTracking = Boolean(options?.autoOpenTracking);
+
+    if (options?.routeModeOverride) {
+      setRouteModeAndPersist(options.routeModeOverride);
+    }
+
     (async () => {
+      const launchRecipientsReady = await ensureGuardiansOrContactsBeforeLaunch(resolvedContactIds);
+      if (!launchRecipientsReady) return;
+
       if (shareLiveLocation) {
         const confirmedShare = await confirmAction({
           title: "Activer le partage live de position ?",
@@ -757,16 +904,14 @@ export default function SetupScreen() {
         setSaving(true);
         setErrorMessage("");
         setNotificationDetails("");
-        const expected = toExpectedArrivalIso(expectedHour, expectedMinute);
+        const expected = toExpectedArrivalIso(expectedHourValue, expectedMinuteValue);
         const safetyConfig = await getSafetyEscalationConfig();
-        const normalizedFrom = fromAddress.trim();
-        const normalizedTo = toAddress.trim();
         let session;
         try {
           session = await createSessionWithContacts({
             from_address: normalizedFrom,
             to_address: normalizedTo,
-            contactIds: selectedContacts,
+            contactIds: resolvedContactIds,
             expected_arrival_time: expected
           });
         } catch (error) {
@@ -776,7 +921,7 @@ export default function SetupScreen() {
           await enqueuePendingTripLaunch({
             fromAddress: normalizedFrom,
             toAddress: normalizedTo,
-            contactIds: selectedContacts,
+            contactIds: resolvedContactIds,
             expectedArrivalIso: expected,
             shareLiveLocation
           });
@@ -830,8 +975,8 @@ export default function SetupScreen() {
         try {
           await syncSafeBackHomeWidget({
             status: "trip_active",
-            fromAddress: fromAddress.trim(),
-            toAddress: toAddress.trim(),
+            fromAddress: normalizedFrom,
+            toAddress: normalizedTo,
             note: "Trajet en cours",
             updatedAtIso: new Date().toISOString()
           });
@@ -840,8 +985,10 @@ export default function SetupScreen() {
         }
         const time = formatNowTime();
         const arrivalText =
-          formatTimeParts(expectedHour, expectedMinute) ||
-          (routeResult ? `${routeResult.durationMinutes} min'estimees` : "heure estimee inconnue");
+          formatTimeParts(expectedHourValue, expectedMinuteValue) ||
+          (resolvedRouteResult
+            ? `${resolvedRouteResult.durationMinutes} min'estimees`
+            : "heure estimee inconnue");
         let guardiansNotifiedCount = 0;
         try {
           const guardianResult = await sendTripStartedSignalToGuardians({
@@ -854,10 +1001,10 @@ export default function SetupScreen() {
         } catch {
           guardiansNotifiedCount = 0;
         }
-        const messageBody = `Je démarre mon trajet a ${time} vers ${normalizedTo}. Arrivee prévue : ${arrivalText}.${shareLiveLocation ? ` Partage de position'active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
+        const messageBody = `Je démarre mon trajet a ${time} vers ${destinationForMessage}. Arrivee prévue : ${arrivalText}.${shareLiveLocation ? ` Partage de position'active.${friendViewLink ? ` Suivi: ${friendViewLink}` : ""}` : ""}`;
         const subject = `SafeBack - Demarrage trajet ${time}`;
         const resolvedGroupProfiles = groupProfiles ?? (await getContactGroupProfiles());
-        const departureContacts = selectedContactItems.filter((contact) => {
+        const departureContacts = resolvedSelectedContactItems.filter((contact) => {
           if (!useGroupProfiles) return true;
           const groupKey = resolveContactGroup(contact.contact_group);
           return resolvedGroupProfiles[groupKey].sendOnDeparture;
@@ -973,7 +1120,7 @@ export default function SetupScreen() {
               const schedule = computeSafetyEscalationSchedule({
                 config: safetyConfig,
                 expectedArrivalIso: expected,
-                routeDurationMinutes: routeResult?.durationMinutes ?? null
+                routeDurationMinutes: resolvedRouteResult?.durationMinutes ?? null
               });
               const modeLabel = (mode: string) => {
                 if (mode === "sms") return "SMS";
@@ -1081,9 +1228,7 @@ export default function SetupScreen() {
           dispatchSummary.push("Aucun canal d'envoi disponible.");
         }
         if (guardiansNotifiedCount > 0) {
-          dispatchSummary.push(
-            `Garants notifies automatiquement: ${guardiansNotifiedCount}.`
-          );
+          dispatchSummary.push(`Garants notifies automatiquement: ${guardiansNotifiedCount}.`);
         }
         setNotificationDetails(dispatchSummary.join(" "));
         if (guideFirstTripActive && userId) {
@@ -1093,13 +1238,193 @@ export default function SetupScreen() {
           setGuideFirstTripActive(false);
           setShowGuideHint(false);
         }
-        setShowLaunchModal(true);
+
+        if (autoOpenTracking) {
+          try {
+            router.push({
+              pathname: "/tracking",
+              params: {
+                sessionId: session.id,
+                mode: resolvedRouteMode,
+                shareLiveLocation: shareLiveLocation ? "1" : "0",
+                autoDisableShareOnArrival: autoDisableShareOnArrival ? "1" : "0",
+                shareToken: liveShareToken ?? undefined
+              }
+            });
+          } catch (error) {
+            console.error("[setup/quick] auto tracking push failed", error);
+          }
+          setShowLaunchModal(false);
+        } else {
+          setShowLaunchModal(true);
+        }
       } catch (error: any) {
         setErrorMessage(error?.message ?? "Erreur lors du lancement.");
       } finally {
         setSaving(false);
       }
     })();
+  };
+
+  const startQuickTimer = async (durationMinutes: number) => {
+    const minutes = Math.max(1, Math.min(24 * 60, Math.round(durationMinutes)));
+    const now = Date.now();
+    const endsAtMs = now + minutes * 60 * 1000;
+    setQuickTimerState({
+      id: `${now}`,
+      durationMinutes: minutes,
+      endsAtMs,
+      alertSent: false
+    });
+    setShowQuickTimerModal(false);
+    setSuccessMessage(`Timer lancé pour ${minutes} min.`);
+
+    if (Constants.appOwnership !== "expo") {
+      try {
+        const Notifications = await import("expo-notifications");
+        const current = await Notifications.getPermissionsAsync();
+        let status = current.status;
+        if (status !== "granted") {
+          const requested = await Notifications.requestPermissionsAsync();
+          status = requested.status;
+        }
+        if (status === "granted") {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: "SafeBack - Timer",
+              body: `Le timer de ${minutes} min est terminé. Confirme ton état.`
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+              seconds: minutes * 60,
+              repeats: false
+            }
+          });
+        }
+      } catch {
+        // no-op : le timer continue côté app même sans notification locale.
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!quickTimerState || quickTimerState.alertSent) return;
+    const timer = setInterval(() => {
+      if (Date.now() < quickTimerState.endsAtMs) return;
+      setQuickTimerState((prev) => (prev ? { ...prev, alertSent: true } : prev));
+      sendWatchTimerExpiredSignalToGuardians({
+        durationMinutes: quickTimerState.durationMinutes
+      })
+        .then((result) => {
+          setErrorMessage("");
+          setSuccessMessage(
+            result.conversations > 0
+              ? `Timer expiré: ${result.conversations} garant(s) prévenu(s).`
+              : "Timer expiré: aucun garant actif à prévenir."
+          );
+        })
+        .catch((error: any) => {
+          setErrorMessage(
+            error?.message ?? "Timer expiré, mais l'alerte garant n'a pas pu être envoyée."
+          );
+        });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [quickTimerState]);
+
+  const launchQuickTrip = async (params: {
+    kind: Exclude<QuickActionKey, "simple_timer" | null>;
+    toAddress: string;
+    selectedContactIds: string[];
+    mode: RouteMode;
+    requireDestination: boolean;
+  }) => {
+    try {
+      setQuickActionBusy(params.kind);
+      setErrorMessage("");
+      const currentAddress = await resolveCurrentAddressForQuickAction();
+      let quickRoute: RouteResult | null = null;
+      if (ROUTE_ESTIMATION_ENABLED && params.toAddress.trim().length > 0) {
+        try {
+          quickRoute = await fetchRoute(currentAddress, params.toAddress, params.mode);
+        } catch {
+          quickRoute = null;
+        }
+      }
+      setFromAddress(currentAddress);
+      setToAddress(params.toAddress);
+      setSelectedContacts(params.selectedContactIds);
+      setRouteModeAndPersist(params.mode);
+      setRouteResult(quickRoute);
+      setShowTransitNotice(false);
+      setAdvancedModeOpen(false);
+
+      launchSession({
+        fromAddressOverride: currentAddress,
+        toAddressOverride: params.toAddress,
+        selectedContactIdsOverride: params.selectedContactIds,
+        routeModeOverride: params.mode,
+        routeResultOverride: quickRoute,
+        autoOpenTracking: true,
+        requireDestination: params.requireDestination
+      });
+    } catch (error: any) {
+      setErrorMessage(error?.message ?? "Impossible de lancer cette action rapide.");
+    } finally {
+      setQuickActionBusy(null);
+    }
+  };
+
+  const handleQuickDepartNow = async () => {
+    setQuickDepartDestination("");
+    setShowQuickDepartModal(true);
+  };
+
+  const confirmQuickDepartNow = async () => {
+    const destination = quickDepartDestination.trim();
+    if (!destination) {
+      setErrorMessage("Choisis une destination avant de démarrer.");
+      return;
+    }
+    setShowQuickDepartModal(false);
+    await launchQuickTrip({
+      kind: "depart_now",
+      toAddress: destination,
+      selectedContactIds: getPrimaryContactIds(),
+      mode: "walking",
+      requireDestination: true
+    });
+  };
+
+  const handleQuickGoHome = async () => {
+    if (!homeFavorite?.address) {
+      setErrorMessage("Aucune adresse Maison n'est configurée. Ouvre ton profil pour la configurer.");
+      router.push("/account");
+      return;
+    }
+    const fallbackMode = routeMode || "walking";
+    await launchQuickTrip({
+      kind: "go_home",
+      toAddress: homeFavorite.address,
+      selectedContactIds:
+        getDefaultContactIdsForGroup("family").length > 0
+          ? getDefaultContactIdsForGroup("family")
+          : getPrimaryContactIds(),
+      mode: fallbackMode,
+      requireDestination: true
+    });
+  };
+
+  const handleQuickFavoriteDestination = async (address: string) => {
+    const fallbackMode = routeMode || "walking";
+    setShowFavoriteLaunchModal(false);
+    await launchQuickTrip({
+      kind: "favorite_destination",
+      toAddress: address,
+      selectedContactIds: getPrimaryContactIds(),
+      mode: fallbackMode,
+      requireDestination: true
+    });
   };
 
   return (
@@ -1155,27 +1480,143 @@ export default function SetupScreen() {
             </View>
           </View>
 
-          <View className="mt-5 flex-row gap-2">
-            <TouchableOpacity
-              className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2"
-              onPress={swapAddresses}
-              disabled={!fromAddress && !toAddress}
-            >
-              <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">
-                Inverser
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2"
-              onPress={resetForm}
-            >
-              <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">
-                Réinitialiser
-              </Text>
-            </TouchableOpacity>
+          <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Actions rapides</Text>
+            <Text className="mt-2 text-sm text-slate-600">
+              Lance en un geste. Le mode avancé reste disponible plus bas.
+            </Text>
+
+            <View className="mt-4 gap-2">
+              <TouchableOpacity
+                className={`rounded-2xl px-4 py-4 ${quickActionBusy === "depart_now" ? "bg-slate-300" : "bg-[#111827]"}`}
+                onPress={() => {
+                  handleQuickDepartNow().catch(() => {
+                    // no-op
+                  });
+                }}
+                disabled={saving || quickActionBusy !== null}
+              >
+                <Text className="text-center text-sm font-semibold text-white">🚶‍♂️ Je pars maintenant</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className={`rounded-2xl px-4 py-4 ${quickActionBusy === "go_home" ? "bg-slate-300" : "bg-emerald-600"}`}
+                onPress={() => {
+                  handleQuickGoHome().catch(() => {
+                    // no-op
+                  });
+                }}
+                disabled={saving || quickActionBusy !== null}
+              >
+                <Text className="text-center text-sm font-semibold text-white">🏠 Je rentre chez moi</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                onPress={() => setShowQuickTimerModal(true)}
+                disabled={saving || quickActionBusy !== null}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-800">⏱ Timer simple</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                onPress={() => setShowFavoriteLaunchModal(true)}
+                disabled={saving || quickActionBusy !== null}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-800">⭐ Vers un lieu favori</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View className="mt-3 flex-row gap-2">
+              <TouchableOpacity
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3"
+                onPress={() => router.push("/favorites")}
+              >
+                <Text className="text-center text-xs font-semibold text-slate-700">
+                  Configurer maison / favoris
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3"
+                onPress={() => router.push("/friends")}
+              >
+                <Text className="text-center text-xs font-semibold text-slate-700">
+                  Configurer garants / amis
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {quickTimerState ? (
+              <View className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+                <Text className="text-xs font-semibold uppercase tracking-widest text-cyan-700">
+                  Timer actif
+                </Text>
+                <Text className="mt-1 text-sm text-cyan-900">
+                  {quickTimerState.alertSent
+                    ? "Timer terminé. Alerte envoyée aux garants."
+                    : `Fin dans ${Math.max(
+                        1,
+                        Math.ceil((quickTimerState.endsAtMs - Date.now()) / 60000)
+                      )} min`}
+                </Text>
+                {!quickTimerState.alertSent ? (
+                  <TouchableOpacity
+                    className="mt-3 rounded-xl bg-cyan-700 px-3 py-2"
+                    onPress={() => {
+                      setQuickTimerState(null);
+                      setSuccessMessage("Timer confirmé et clôturé.");
+                    }}
+                  >
+                    <Text className="text-center text-xs font-semibold text-white">
+                      Je confirme, tout va bien
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
+
+          <View className="mt-4 rounded-3xl border border-[#E7E0D7] bg-white/90 p-4 shadow-sm">
+            <TouchableOpacity
+              className="flex-row items-center justify-between"
+              onPress={() => setAdvancedModeOpen((prev) => !prev)}
+            >
+              <Text className="text-sm font-semibold text-slate-800">Mode avancé</Text>
+              <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                {advancedModeOpen ? "Masquer" : "Afficher"}
+              </Text>
+            </TouchableOpacity>
+            <Text className="mt-2 text-xs text-slate-500">
+              Formulaire complet: adresses, mode, contacts, canaux et lancement manuel.
+            </Text>
+          </View>
+
+          {advancedModeOpen ? (
+            <View className="mt-5 flex-row gap-2">
+              <TouchableOpacity
+                className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2"
+                onPress={swapAddresses}
+                disabled={!fromAddress && !toAddress}
+              >
+                <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">
+                  Inverser
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2"
+                onPress={resetForm}
+              >
+                <Text className="text-center text-xs font-semibold uppercase tracking-widest text-slate-700">
+                  Réinitialiser
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </Animated.View>
 
+        {successMessage ? <FeedbackMessage kind="success" message={successMessage} /> : null}
+        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
+
+        {advancedModeOpen ? (
+          <>
         <Animated.View style={getRevealStyle(1)}>
           <View className="mt-8 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
             <View className="flex-row items-center justify-between">
@@ -1384,6 +1825,15 @@ export default function SetupScreen() {
                 <ActivityIndicator size="small" color="#0f172a" />
                 <Text className="text-sm text-slate-500">Calcul du temps de trajet...</Text>
               </View>
+            ) : !ROUTE_ESTIMATION_ENABLED ? (
+              <View className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <Text className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                  Estimation suspendue
+                </Text>
+                <Text className="mt-1 text-sm text-amber-800">
+                  Le calcul de distance/temps est temporairement désactivé pour stabiliser l'app.
+                </Text>
+              </View>
             ) : routeResult ? (
               <View className="mt-4 rounded-3xl bg-[#111827] px-5 py-4 shadow-sm">
                 <Text className="text-xs uppercase tracking-widest text-slate-300">
@@ -1427,7 +1877,7 @@ export default function SetupScreen() {
                         return;
                       }
                       setShowTransitNotice(false);
-                      setRouteMode(item.key as RouteMode);
+                      setRouteModeAndPersist(item.key as RouteMode);
                     }}
                   >
                     <Text
@@ -1789,8 +2239,6 @@ export default function SetupScreen() {
           ) : null}
         </Animated.View>
 
-        {errorMessage ? <FeedbackMessage kind="error" message={errorMessage} /> : null}
-
         {simulatedMessages.length > 0 ? (
           <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
             <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
@@ -1836,7 +2284,7 @@ export default function SetupScreen() {
             className={`mt-8 rounded-3xl px-6 py-5 shadow-lg ${
               canLaunch ? "bg-[#111827]" : "bg-slate-300"
             } ${guideFirstTripActive ? "border-2 border-cyan-300" : ""}`}
-            onPress={launchSession}
+            onPress={() => launchSession()}
             disabled={!canLaunch || saving}
           >
             <View className="flex-row items-center justify-between">
@@ -1854,7 +2302,257 @@ export default function SetupScreen() {
             </View>
           </TouchableOpacity>
         </Animated.View>
+          </>
+        ) : null}
       </ScrollView>
+
+      <Modal transparent visible={showQuickDepartModal} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl bg-white p-5 shadow-lg">
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Je pars maintenant
+            </Text>
+            <Text className="mt-2 text-lg font-extrabold text-slate-900">
+              Choisis d'abord ta destination
+            </Text>
+            <AddressInput
+              label="Destination"
+              value={quickDepartDestination}
+              onChange={setQuickDepartDestination}
+              onSelect={setQuickDepartDestination}
+            />
+            <View className="mt-4 flex-row gap-2">
+              <TouchableOpacity
+                className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                onPress={() => setShowQuickDepartModal(false)}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-700">Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                onPress={() => {
+                  confirmQuickDepartNow().catch(() => {
+                    // no-op
+                  });
+                }}
+              >
+                <Text className="text-center text-sm font-semibold text-white">Lancer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={showGuardianRequiredModal} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl bg-white p-5 shadow-lg">
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Proche requis
+            </Text>
+            <Text className="mt-2 text-lg font-extrabold text-slate-900">
+              Choisis un contact ou un garant avant de partir
+            </Text>
+            {guardianModalLoading ? (
+              <View className="mt-4 flex-row items-center gap-2">
+                <ActivityIndicator size="small" color="#0f172a" />
+                <Text className="text-sm text-slate-600">Chargement des proches...</Text>
+              </View>
+            ) : (
+              <>
+                <Text className="mt-3 text-xs uppercase tracking-widest text-slate-500">
+                  Contacts
+                </Text>
+                {favoriteContacts.length === 0 ? (
+                  <Text className="mt-2 text-sm text-slate-600">
+                    Aucun contact favori disponible.
+                  </Text>
+                ) : (
+                  <View className="mt-2 gap-2">
+                    {favoriteContacts.slice(0, 4).map((contact) => (
+                      <TouchableOpacity
+                        key={`guardian-contact-${contact.id}`}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                        onPress={() => {
+                          setSelectedContacts((prev) =>
+                            prev.includes(contact.id) ? prev : [...prev, contact.id]
+                          );
+                          setShowGuardianRequiredModal(false);
+                          setSuccessMessage(`Contact ajouté: ${contact.name}`);
+                        }}
+                      >
+                        <Text className="text-sm font-semibold text-slate-800">{contact.name}</Text>
+                        <Text className="mt-1 text-xs text-slate-500">
+                          {getContactGroupMeta(resolveContactGroup(contact.contact_group)).label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                <Text className="mt-4 text-xs uppercase tracking-widest text-slate-500">
+                  Amis (devenir garant)
+                </Text>
+                {friendCandidates.length === 0 ? (
+                  <Text className="mt-2 text-sm text-slate-600">
+                    Aucun ami disponible pour le moment.
+                  </Text>
+                ) : (
+                  <View className="mt-2 gap-2">
+                    {friendCandidates.slice(0, 4).map((friend) => (
+                      <TouchableOpacity
+                        key={`guardian-friend-${friend.id}`}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                        onPress={async () => {
+                          try {
+                            await createGuardianAssignment(friend.friend_user_id);
+                            setShowGuardianRequiredModal(false);
+                            setSuccessMessage(`Garant ajouté: ${getFriendLabel(friend)}`);
+                          } catch (error: any) {
+                            setErrorMessage(
+                              error?.message ?? "Impossible d'ajouter ce proche comme garant."
+                            );
+                          }
+                        }}
+                      >
+                        <Text className="text-sm font-semibold text-slate-800">
+                          {getFriendLabel(friend)}
+                        </Text>
+                        <Text className="mt-1 text-xs text-slate-500">Définir comme garant</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+            <View className="mt-4 flex-row gap-2">
+              <TouchableOpacity
+                className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                onPress={() => setShowGuardianRequiredModal(false)}
+              >
+                <Text className="text-center text-sm font-semibold text-slate-700">Fermer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 rounded-2xl bg-[#111827] px-4 py-3"
+                onPress={() => {
+                  setShowGuardianRequiredModal(false);
+                  router.push("/friends");
+                }}
+              >
+                <Text className="text-center text-sm font-semibold text-white">Ouvrir Réseau proches</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={showFavoriteLaunchModal} animationType="slide">
+        <View className="flex-1 justify-end bg-black/30">
+          <View className="rounded-t-3xl bg-white px-5 pb-8 pt-5">
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Vers un lieu favori
+            </Text>
+            <Text className="mt-1 text-lg font-extrabold text-slate-900">
+              Choisis une destination
+            </Text>
+            {favoriteAddresses.length === 0 ? (
+              <Text className="mt-3 text-sm text-slate-600">
+                Aucun lieu favori configuré. Ajoute-en dans Favoris.
+              </Text>
+            ) : (
+              <View className="mt-3 gap-2">
+                {favoriteAddresses.map((item) => (
+                  <TouchableOpacity
+                    key={`quick-favorite-${item.id}`}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                    onPress={() => {
+                      handleQuickFavoriteDestination(item.address).catch(() => {
+                        // no-op
+                      });
+                    }}
+                  >
+                    <Text className="text-sm font-semibold text-slate-800">{item.label}</Text>
+                    <Text className="mt-1 text-xs text-slate-500">{item.address}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <TouchableOpacity
+              className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+              onPress={() => setShowFavoriteLaunchModal(false)}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">Fermer</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={showQuickTimerModal} animationType="fade">
+        <View className="flex-1 items-center justify-center bg-black/45 px-6">
+          <View className="w-full rounded-3xl bg-white p-5 shadow-lg">
+            <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Timer simple
+            </Text>
+            <Text className="mt-2 text-lg font-extrabold text-slate-900">
+              Choisis une durée
+            </Text>
+            <View className="mt-4 gap-2">
+              {[
+                { id: "30", label: "30 min", minutes: 30 },
+                { id: "60", label: "1 h", minutes: 60 },
+                { id: "120", label: "2 h", minutes: 120 }
+              ].map((item) => (
+                <TouchableOpacity
+                  key={`quick-timer-${item.id}`}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                  onPress={() => {
+                    startQuickTimer(item.minutes).catch(() => {
+                      // no-op
+                    });
+                  }}
+                >
+                  <Text className="text-center text-sm font-semibold text-slate-800">
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <View className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <Text className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  Custom
+                </Text>
+                <TextInput
+                  className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  placeholder="Durée en minutes"
+                  keyboardType="number-pad"
+                  placeholderTextColor="#94a3b8"
+                  value={customTimerMinutes}
+                  onChangeText={setCustomTimerMinutes}
+                />
+                <TouchableOpacity
+                  className="mt-2 rounded-xl bg-[#111827] px-3 py-2"
+                  onPress={() => {
+                    const minutes = Number(customTimerMinutes);
+                    if (!Number.isFinite(minutes) || minutes <= 0) {
+                      setErrorMessage("Durée custom invalide.");
+                      return;
+                    }
+                    startQuickTimer(minutes).catch(() => {
+                      // no-op
+                    });
+                  }}
+                >
+                  <Text className="text-center text-xs font-semibold text-white">Lancer custom</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <TouchableOpacity
+              className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+              onPress={() => setShowQuickTimerModal(false)}
+            >
+              <Text className="text-center text-sm font-semibold text-slate-700">Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal transparent visible={showGuideHint && guideFirstTripActive} animationType="fade">
         <View className="flex-1 items-center justify-center bg-black/45 px-6">

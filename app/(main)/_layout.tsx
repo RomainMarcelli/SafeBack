@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Stack, router, usePathname } from "expo-router";
+import { Slot, useRootNavigationState, useRouter } from "expo-router";
 import { Animated, Easing, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -54,21 +54,6 @@ const TABS: TabItem[] = [
     iconActive: "person"
   }
 ];
-
-function useSafePathname() {
-  const warnedRef = useRef(false);
-  try {
-    return usePathname();
-  } catch (error) {
-    if (!warnedRef.current) {
-      warnedRef.current = true;
-      console.error("[main-layout/nav] usePathname unavailable", {
-        message: String((error as { message?: string })?.message ?? error)
-      });
-    }
-    return "/";
-  }
-}
 
 function TabButton(props: {
   item: TabItem;
@@ -167,13 +152,27 @@ function TabButton(props: {
 }
 
 export default function MainLayout() {
-  const pathname = useSafePathname();
+  const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const insets = useSafeAreaInsets();
   const [unreadCount, setUnreadCount] = useState(0);
   const [online, setOnline] = useState<boolean>(true);
   const [pendingQuickHref, setPendingQuickHref] = useState<string | null>(null);
+  const [activeHref, setActiveHref] = useState<string>("/");
+
+  const resolveActiveTabHref = (href: string) => {
+    if (href === "/") return "/";
+    const match = TABS.find((tab) => href === tab.href || href.startsWith(`${tab.href}/`));
+    return match?.href ?? "/";
+  };
+  const navigationReady = Boolean(rootNavigationState?.key);
 
   useEffect(() => {
+    if (!navigationReady) return;
+    // Les quick actions restent désactivées en Expo Go / Dev Client pour éviter toute navigation précoce.
+    if (Constants.executionEnvironment !== "standalone") {
+      return;
+    }
     // Les quick actions peuvent arriver avant que le navigateur soit prêt: on met en file d'attente.
     const queueIfRouterAction = (action: QuickActions.Action | undefined) => {
       if (!action || !isRouterAction(action)) return;
@@ -188,9 +187,13 @@ export default function MainLayout() {
     });
 
     return () => sub.remove();
-  }, []);
+  }, [navigationReady]);
 
   useEffect(() => {
+    if (!navigationReady) return;
+    if (Constants.executionEnvironment !== "standalone") {
+      return;
+    }
     if (!pendingQuickHref) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -198,7 +201,8 @@ export default function MainLayout() {
     const tryNavigate = (attempt: number) => {
       if (cancelled) return;
       try {
-        router.push(pendingQuickHref as any);
+        router.replace(pendingQuickHref as any);
+        setActiveHref(resolveActiveTabHref(pendingQuickHref));
         setPendingQuickHref(null);
       } catch (error) {
         const message = String((error as { message?: string })?.message ?? "");
@@ -222,7 +226,7 @@ export default function MainLayout() {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [pendingQuickHref]);
+  }, [pendingQuickHref, navigationReady]);
 
   const ensurePushNotificationsConsent = async (): Promise<any> => {
     if (Constants.appOwnership === "expo") return null;
@@ -404,13 +408,7 @@ export default function MainLayout() {
         setUnreadCount(0);
       }
     })();
-  }, [pathname, setUnreadCount]);
-
-  const activeHref = useMemo(() => {
-    if (pathname === "/") return "/";
-    const match = TABS.find((tab) => pathname === tab.href || pathname.startsWith(`${tab.href}/`));
-    return match?.href ?? "/";
-  }, [pathname]);
+  }, [setUnreadCount]);
 
   const tabsWithBadges = useMemo(
     () =>
@@ -427,8 +425,10 @@ export default function MainLayout() {
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Garde un navigateur dédié au groupe "(main)" pour garantir le contexte de navigation des écrans enfants. */}
-      <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }} />
+      {/* Slot: évite un navigateur imbriqué inutile et stabilise le contexte de navigation du groupe "(main)". */}
+      <View style={{ flex: 1 }}>
+        <Slot />
+      </View>
       <View
         style={{
           borderTopWidth: 1,
@@ -455,9 +455,12 @@ export default function MainLayout() {
                 showOnlineDot={tab.key === "account"}
                 online={online}
                 onPress={() => {
+                  if (!navigationReady) return;
                   if (!active) {
                     try {
-                      router.push(tab.href);
+                      // Navigation d'onglet non empilante: évite de conserver plusieurs écrans cachés actifs.
+                      router.replace(tab.href as any);
+                      setActiveHref(tab.href);
                     } catch (error) {
                       console.error("[main-layout/nav] tab push failed", {
                         href: tab.href,
@@ -481,6 +484,7 @@ export default function MainLayout() {
             <TouchableOpacity
               testID="notifications-fab"
               onPress={() => {
+                if (!navigationReady) return;
                 try {
                   router.push("/notifications");
                 } catch (error) {

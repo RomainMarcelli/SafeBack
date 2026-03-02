@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { Link, useRouter } from "expo-router";
+import { Link, Redirect, useRouter } from "expo-router";
 import {
   Image,
   Keyboard,
@@ -222,14 +222,8 @@ export default function AccountScreen() {
     setSuccessMessage("");
   }, [successMessage, showToast]);
 
-  useEffect(() => {
-    if (!checking && !userEmail) {
-      router.replace("/auth");
-    }
-  }, [checking, userEmail, router]);
-
   if (!checking && !userEmail) {
-    return null;
+    return <Redirect href="/auth" />;
   }
 
   const publicId = publicProfile?.public_id ?? "";
@@ -577,6 +571,25 @@ export default function AccountScreen() {
     { id: "todo", label: "À faire", count: shortcutStatusCounts.todo }
   ];
 
+  const quickShortcutTiles: Array<{
+    id: string;
+    title: string;
+    href: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    variant: "light" | "accent";
+  }> = [
+    { id: "setup", title: "Trajet", href: "/setup", icon: "navigate-outline", variant: "accent" },
+    { id: "trips", title: "Historique", href: "/trips", icon: "time-outline", variant: "light" },
+    { id: "messages", title: "Messages", href: "/messages", icon: "chatbubble-ellipses-outline", variant: "light" },
+    { id: "friends", title: "Amis", href: "/friends", icon: "people-outline", variant: "light" },
+    { id: "map", title: "Carte live", href: "/friends-map", icon: "map-outline", variant: "light" },
+    { id: "alerts", title: "Alertes", href: "/safety-alerts", icon: "shield-checkmark-outline", variant: "light" },
+    { id: "auto", title: "Auto check-ins", href: "/auto-checkins", icon: "flash-outline", variant: "light" },
+    { id: "guardians", title: "Dashboard proches", href: "/guardian-dashboard", icon: "people-circle-outline", variant: "light" },
+    { id: "notifications", title: "Notifications", href: "/notifications", icon: "notifications-outline", variant: "light" },
+    { id: "incidents", title: "Incidents", href: "/incidents", icon: "documents-outline", variant: "light" }
+  ];
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkMode ? "#0B1220" : "#F7F2EA" }}>
       <StatusBar style={darkMode ? "light" : "dark"} />
@@ -617,25 +630,6 @@ export default function AccountScreen() {
         <Text className={`mt-2 ${darkMode ? "text-slate-300" : "text-[#475569]"} ${fontClasses.body}`}>
           Mets à jour tes informations personnelles et tes favoris.
         </Text>
-
-        <View className={`mt-4 rounded-3xl border p-4 shadow-sm ${highContrast ? "border-slate-900 bg-white" : "border-[#E7E0D7] bg-white/90"}`}>
-          <Text className="text-xs uppercase tracking-widest text-slate-500">Accessibilité active</Text>
-          <Text className="mt-2 text-sm text-slate-700">
-            Texte: {textScale === "large" ? "Grand" : "Normal"} · Contraste: {highContrast ? "Élevé" : "Standard"}
-          </Text>
-          <View className="mt-3 flex-row gap-2">
-            <Link href="/accessibility" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                <Text className="text-center text-sm font-semibold text-slate-700">Régler</Text>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/voice-assistant" asChild>
-              <TouchableOpacity className="flex-1 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
-                <Text className="text-center text-sm font-semibold text-cyan-700">Assistant vocal</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-        </View>
 
         <View className="mt-6 rounded-3xl border border-[#E7E0D7] bg-white/90 p-5 shadow-sm">
           <Text className="text-xs uppercase tracking-widest text-slate-500">Mon ID SafeBack</Text>
@@ -824,6 +818,64 @@ export default function AccountScreen() {
               Voir tous les raccourcis
             </Text>
           </TouchableOpacity>
+          <View className="mt-3 flex-row flex-wrap">
+            {quickShortcutTiles.map((item) => (
+              <View key={`shortcut-tile-${item.id}`} className="mb-2 w-1/2 px-1">
+                <Link href={item.href} asChild>
+                  <TouchableOpacity
+                    className={`h-14 rounded-2xl border px-3 ${
+                      item.variant === "accent"
+                        ? "border-[#111827] bg-[#111827]"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <View className="flex-row items-center justify-center gap-2">
+                      <Ionicons
+                        name={item.icon}
+                        size={16}
+                        color={item.variant === "accent" ? "#ffffff" : "#334155"}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        className={`text-sm font-semibold ${
+                          item.variant === "accent" ? "text-white" : "text-slate-700"
+                        }`}
+                      >
+                        {item.title}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </Link>
+              </View>
+            ))}
+          </View>
+          <View
+            className={`mt-3 rounded-2xl border px-3 py-3 ${
+              highContrast ? "border-slate-900 bg-white" : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <Text className="text-xs uppercase tracking-widest text-slate-500">Accessibilité active</Text>
+            <Text className="mt-1 text-sm text-slate-700">
+              Texte: {textScale === "large" ? "Grand" : "Normal"} · Contraste:{" "}
+              {highContrast ? "Élevé" : "Standard"}
+            </Text>
+          </View>
+          <View className="mt-2 flex-row gap-2">
+            <Link href="/accessibility" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-slate-700">
+                  Accessibilité
+                </Text>
+              </TouchableOpacity>
+            </Link>
+            <Link href="/voice-assistant" asChild>
+              <TouchableOpacity className="flex-1 rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-3">
+                <Text className="text-center text-sm font-semibold text-cyan-700">
+                  Assistant vocal
+                </Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
           <View className="mt-2 flex-row gap-2">
             <Link href="/privacy-center" asChild>
               <TouchableOpacity className="flex-1 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">

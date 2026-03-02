@@ -412,6 +412,38 @@ export async function sendLowBatterySignalToGuardians(params: {
   return { conversations: sent };
 }
 
+export async function sendWatchTimerExpiredSignalToGuardians(params: {
+  durationMinutes: number;
+}): Promise<{ conversations: number }> {
+  const userId = await requireUserId();
+  const { data: guardians, error: guardiansError } = await supabase
+    .from("guardianships")
+    .select("guardian_user_id")
+    .eq("owner_user_id", userId)
+    .eq("status", "active");
+  if (guardiansError) throw guardiansError;
+
+  const uniqueGuardians = [...new Set((guardians ?? []).map((row: any) => row.guardian_user_id as string))];
+  const duration = Math.max(1, Math.round(params.durationMinutes));
+  const body = `Timer SafeBack expiré (${duration} min) sans confirmation. Peux-tu vérifier que tout va bien ?`;
+
+  let sent = 0;
+  for (const guardianId of uniqueGuardians) {
+    const conversationId = await ensureDirectConversation(guardianId);
+    await sendConversationMessage({
+      conversationId,
+      messageType: "system",
+      body,
+      metadata: {
+        event_type: "watch_timer_expired",
+        duration_minutes: duration
+      }
+    });
+    sent += 1;
+  }
+  return { conversations: sent };
+}
+
 export async function sendAutoCheckinSignalToRecipients(params: {
   recipientUserIds: string[];
   placeLabel: string;

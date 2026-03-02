@@ -57,12 +57,6 @@ export default function ForgottenTripSettingsScreen() {
   }, []);
 
   useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
-  useEffect(() => {
     if (!userId) return;
     (async () => {
       try {

@@ -300,15 +300,19 @@ describe("db helpers", () => {
     });
   });
 
-  it("deleteAllSessions runs a broad delete filter", async () => {
-    setResult("sessions", "neq", { data: null, error: null });
+  it("deleteAllSessions deletes only current user sessions and returns deleted count", async () => {
+    setResult("sessions", "select", {
+      data: [{ id: "s-1" }, { id: "s-2" }],
+      error: null
+    });
 
-    await deleteAllSessions();
+    const deleted = await deleteAllSessions();
 
-    expect(state.calls.some((call) => call.table === "sessions" && call.action === "neq")).toBe(true);
-    expect(state.calls.find((call) => call.table === "sessions" && call.action === "neq")?.args).toEqual([
-      "id",
-      ""
+    expect(deleted).toBe(2);
+    expect(state.calls.some((call) => call.table === "sessions" && call.action === "eq")).toBe(true);
+    expect(state.calls.find((call) => call.table === "sessions" && call.action === "eq")?.args).toEqual([
+      "user_id",
+      "user-1"
     ]);
   });
 

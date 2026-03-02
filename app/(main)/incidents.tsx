@@ -1,7 +1,7 @@
 // Écran principal des incidents : création, consultation et export des rapports utilisateur.
 import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { listIncidentReports } from "../../src/lib/core/db";
@@ -37,12 +37,6 @@ export default function IncidentsScreen() {
   }, []);
 
   useEffect(() => {
-    if (!checking && !userId) {
-      router.replace("/auth");
-    }
-  }, [checking, userId, router]);
-
-  useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
@@ -59,7 +53,7 @@ export default function IncidentsScreen() {
   }, [userId]);
 
   if (!checking && !userId) {
-    return null;
+    return <Redirect href="/auth" />;
   }
 
   return (
